@@ -1,0 +1,1089 @@
+<!DOCTYPE html>
+<html lang="lo">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>ຮ້ານຂອງຂ້ອຍ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Lao:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  body { margin: 0; background: #FAFAF7; }
+  * { -webkit-tap-highlight-color: transparent; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<script>
+  // Shim: same API shape as window.storage but backed by the phone's
+  // own local storage, so the app keeps working with no changes.
+  window.storage = {
+    get: function (key) {
+      return new Promise(function (resolve, reject) {
+        var v = localStorage.getItem(key);
+        if (v === null) { reject(new Error("not found")); return; }
+        resolve({ key: key, value: v, shared: false });
+      });
+    },
+    set: function (key, value) {
+      return new Promise(function (resolve) {
+        localStorage.setItem(key, value);
+        resolve({ key: key, value: value, shared: false });
+      });
+    }
+  };
+</script>
+
+<script>
+  window.onerror = function (msg, src, line, col, err) {
+    document.getElementById("root").innerHTML =
+      '<div style="padding:20px;font-family:sans-serif;color:#791F1F;background:#FCEBEB;">' +
+      '<b>ມີຂໍ້ຜິດພາດ:</b><br>' + msg + ' (ແຖວ ' + line + ')</div>';
+  };
+</script>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useCallback, useMemo } = React;
+
+const CATEGORIES = [
+  { id: "vegetable", label: "ຜັກ", color: "#3B6D11", bg: "#EAF3DE" },
+  { id: "fish", label: "ປາ", color: "#185FA5", bg: "#E6F1FB" },
+  { id: "seasoning", label: "ເຄື່ອງປຸງ", color: "#854F0B", bg: "#FAEEDA" },
+  { id: "bath", label: "ເຄື່ອງໃຊ້ອາບນ້ຳ", color: "#534AB7", bg: "#EEEDFE" },
+  { id: "soap", label: "ສະບູ", color: "#993556", bg: "#FBEAF0" },
+];
+
+const UNITS = ["ກິບ", "ໂຕ", "ຊິ້ນ", "ຂວດ", "ຫໍ່", "ກ້ອນ", "ກຣາມ", "ກິໂລ"];
+
+function uid() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+
+function fmt(n) {
+  return Math.round(Number(n || 0)).toLocaleString("lo-LA");
+}
+
+function todayStr() {
+  const d = new Date();
+  return d.toISOString().slice(0, 10);
+}
+
+function dateStr(iso) {
+  return new Date(iso).toISOString().slice(0, 10);
+}
+
+function shortDate(dstr) {
+  const [y, m, d] = dstr.split("-");
+  return `${d}/${m}`;
+}
+
+function lastNDays(n) {
+  const days = [];
+  const now = new Date();
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(now);
+    d.setDate(d.getDate() - i);
+    days.push(d.toISOString().slice(0, 10));
+  }
+  return days;
+}
+
+function ShopApp() {
+  const [products, setProducts] = useState([]);
+  const [sales, setSales] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [tab, setTab] = useState("stock"); // stock | sell | report
+  const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [filterCat, setFilterCat] = useState("all");
+  const [saleCart, setSaleCart] = useState({}); // productId -> qty
+  const [toast, setToast] = useState("");
+  const [reportDate, setReportDate] = useState(todayStr());
+  const [storageOk, setStorageOk] = useState(true);
+  const [showBackup, setShowBackup] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importError, setImportError] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      if (!window.storage || typeof window.storage.get !== "function") {
+        setStorageOk(false);
+        setLoaded(true);
+        return;
+      }
+      try {
+        const p = await window.storage.get("products");
+        if (p && p.value) setProducts(JSON.parse(p.value));
+      } catch (e) {}
+      try {
+        const s = await window.storage.get("sales");
+        if (s && s.value) setSales(JSON.parse(s.value));
+      } catch (e) {}
+      setLoaded(true);
+    })();
+  }, []);
+
+  const saveProducts = useCallback(async (next) => {
+    setProducts(next);
+    try {
+      const res = await window.storage.set("products", JSON.stringify(next));
+      setStorageOk(!!res);
+      if (!res) showToast("ບໍ່ສາມາດບັນທຶກຂໍ້ມູນຖາວອນໄດ້");
+    } catch (e) {
+      setStorageOk(false);
+      showToast("ບໍ່ສາມາດບັນທຶກຂໍ້ມູນຖາວອນໄດ້");
+    }
+  }, []);
+
+  const saveSales = useCallback(async (next) => {
+    setSales(next);
+    try {
+      const res = await window.storage.set("sales", JSON.stringify(next));
+      setStorageOk(!!res);
+      if (!res) showToast("ບໍ່ສາມາດບັນທຶກຂໍ້ມູນຖາວອນໄດ້");
+    } catch (e) {
+      setStorageOk(false);
+      showToast("ບໍ່ສາມາດບັນທຶກຂໍ້ມູນຖາວອນໄດ້");
+    }
+  }, []);
+
+  function handleImport() {
+    try {
+      const parsed = JSON.parse(importText);
+      if (!parsed || !Array.isArray(parsed.products) || !Array.isArray(parsed.sales)) {
+        setImportError("ຮູບແບບຂໍ້ມູນບໍ່ຖືກຕ້ອງ");
+        return;
+      }
+      saveProducts(parsed.products);
+      saveSales(parsed.sales);
+      setImportError("");
+      setImportText("");
+      setShowBackup(false);
+      showToast("ນຳເຂົ້າຂໍ້ມູນແລ້ວ");
+    } catch (e) {
+      setImportError("ອ່ານຂໍ້ມູນບໍ່ໄດ້ ກວດເບິ່ງວ່າກ໊ອບຂໍ້ຄວາມມາຄົບຫຼືບໍ່");
+    }
+  }
+
+  function showToast(msg) {
+    setToast(msg);
+    setTimeout(() => setToast(""), 2000);
+  }
+
+  function openNewForm() {
+    setEditing({
+      id: null,
+      name: "",
+      category: "vegetable",
+      cost: "",
+      price: "",
+      stock: "",
+      unit: "ກິບ",
+    });
+    setShowForm(true);
+  }
+
+  function openEditForm(p) {
+    setEditing({ ...p, cost: String(p.cost || ""), price: String(p.price), stock: String(p.stock) });
+    setShowForm(true);
+  }
+
+  function handleSaveProduct(e) {
+    e.preventDefault();
+    if (!editing.name.trim()) {
+      showToast("ກະລຸນາໃສ່ຊື່ເຄື່ອງກ່ອນ");
+      return;
+    }
+    const priceNum = parseFloat(editing.price);
+    const stockNum = parseFloat(editing.stock);
+    const costNum = editing.cost === "" ? 0 : parseFloat(editing.cost);
+    if (isNaN(priceNum) || priceNum < 0) {
+      showToast("ລາຄາບໍ່ຖືກຕ້ອງ");
+      return;
+    }
+    if (isNaN(stockNum) || stockNum < 0) {
+      showToast("ຈຳນວນສິນຄ້າບໍ່ຖືກຕ້ອງ");
+      return;
+    }
+    if (isNaN(costNum) || costNum < 0) {
+      showToast("ຕົ້ນທຶນບໍ່ຖືກຕ້ອງ");
+      return;
+    }
+    const nowIso = new Date().toISOString();
+    let next;
+    if (editing.id) {
+      const original = products.find((p) => p.id === editing.id);
+      const restocked = original && stockNum > original.stock;
+      next = products.map((p) =>
+        p.id === editing.id
+          ? {
+              ...p,
+              name: editing.name.trim(),
+              category: editing.category,
+              cost: costNum,
+              price: priceNum,
+              stock: stockNum,
+              unit: editing.unit,
+              lastRestocked: restocked ? nowIso : p.lastRestocked,
+            }
+          : p
+      );
+      showToast("ແກ້ໄຂຂໍ້ມູນແລ້ວ");
+    } else {
+      next = [
+        ...products,
+        {
+          id: uid(),
+          name: editing.name.trim(),
+          category: editing.category,
+          cost: costNum,
+          price: priceNum,
+          stock: stockNum,
+          unit: editing.unit,
+          dateAdded: nowIso,
+          lastRestocked: nowIso,
+        },
+      ];
+      showToast("ເພີ່ມສິນຄ້າແລ້ວ");
+    }
+    saveProducts(next);
+    setShowForm(false);
+    setEditing(null);
+  }
+
+  function handleDeleteProduct(id) {
+    saveProducts(products.filter((p) => p.id !== id));
+    setShowForm(false);
+    setEditing(null);
+    showToast("ລຶບສິນຄ້າແລ້ວ");
+  }
+
+  function catInfo(id) {
+    return CATEGORIES.find((c) => c.id === id) || CATEGORIES[0];
+  }
+
+  const filteredProducts =
+    filterCat === "all" ? products : products.filter((p) => p.category === filterCat);
+
+  function adjustCart(id, delta, maxStock) {
+    setSaleCart((prev) => {
+      const cur = prev[id] || 0;
+      let next = cur + delta;
+      if (next < 0) next = 0;
+      if (next > maxStock) next = maxStock;
+      const copy = { ...prev };
+      if (next === 0) delete copy[id];
+      else copy[id] = next;
+      return copy;
+    });
+  }
+
+  const cartItems = Object.entries(saleCart)
+    .map(([id, qty]) => {
+      const prod = products.find((p) => p.id === id);
+      return prod ? { ...prod, qty } : null;
+    })
+    .filter(Boolean);
+
+  const cartTotal = cartItems.reduce((sum, it) => sum + it.price * it.qty, 0);
+
+  function completeSale() {
+    if (cartItems.length === 0) return;
+    const nextProducts = products.map((p) => {
+      const item = cartItems.find((c) => c.id === p.id);
+      return item ? { ...p, stock: Math.max(0, p.stock - item.qty) } : p;
+    });
+    const cartProfit = cartItems.reduce((sum, it) => sum + (it.price - (it.cost || 0)) * it.qty, 0);
+    const record = {
+      id: uid(),
+      time: new Date().toISOString(),
+      items: cartItems.map((c) => ({ name: c.name, qty: c.qty, price: c.price, cost: c.cost || 0, unit: c.unit })),
+      total: cartTotal,
+      profit: cartProfit,
+    };
+    saveProducts(nextProducts);
+    saveSales([record, ...sales]);
+    setSaleCart({});
+    showToast("ບັນທຶກການຂາຍແລ້ວ");
+  }
+
+  const isToday = (iso) => dateStr(iso) === todayStr();
+  const todaySales = sales.filter((s) => isToday(s.time));
+  const todayRevenue = todaySales.reduce((sum, s) => sum + s.total, 0);
+  const todayProfit = todaySales.reduce((sum, s) => sum + (s.profit || 0), 0);
+  const lowStock = products.filter((p) => p.stock <= 5);
+
+  const reportSales = sales.filter((s) => dateStr(s.time) === reportDate);
+  const reportRevenue = reportSales.reduce((sum, s) => sum + s.total, 0);
+  const reportProfit = reportSales.reduce((sum, s) => sum + (s.profit || 0), 0);
+
+  // last 7 days profit for chart
+  const chartData = useMemo(() => {
+    const days = lastNDays(7);
+    return days.map((d) => {
+      const dayProfit = sales
+        .filter((s) => dateStr(s.time) === d)
+        .reduce((sum, s) => sum + (s.profit || 0), 0);
+      return { date: d, profit: dayProfit };
+    });
+  }, [sales]);
+  const maxChartVal = Math.max(1, ...chartData.map((d) => Math.abs(d.profit)));
+
+  // loss-prevention advisor
+  const lossProducts = products.filter((p) => p.price <= (p.cost || 0));
+  const totalInvestment = products.reduce((sum, p) => sum + (p.cost || 0) * p.stock, 0);
+  const potentialProfit = products.reduce((sum, p) => sum + (p.price - (p.cost || 0)) * p.stock, 0);
+
+  if (!loaded) {
+    return (
+      <div style={styles.loadingWrap}>
+        <p style={{ color: "#5F5E5A" }}>ກຳລັງໂຫລດ...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div style={styles.app}>
+      <div style={styles.header}>
+        <div>
+          <div style={styles.headerTitle}>ຮ້ານຂອງຂ້ອຍ</div>
+          <div style={styles.headerSub}>ຈັດການສິນຄ້າ ແລະ ການຂາຍ</div>
+        </div>
+        <button style={styles.backupBtn} onClick={() => setShowBackup(true)} aria-label="ສຳຮອງຂໍ້ມູນ">
+          <i className="ti ti-cloud-upload" style={{ fontSize: 18 }} aria-hidden="true" />
+        </button>
+      </div>
+
+      {!storageOk && (
+        <div style={styles.warnBanner}>
+          ບໍ່ສາມາດບັນທຶກຂໍ້ມູນຖາວອນໃນອຸປະກອນນີ້ໄດ້ ​— ຂໍ້ມູນອາດຫາຍໄປເມື່ອປິດແອັບ. ໃຫ້ກົດປຸ່ມ <i className="ti ti-cloud-upload" aria-hidden="true" /> ດ້ານເທິງ ເພື່ອກ໊ອບຂໍ້ມູນໄປເກັບໄວ້ ແລ້ວນຳກັບເຂົ້າມາຄັ້ງໜ້າ
+        </div>
+      )}
+
+      <div style={styles.summaryRow}>
+        <div style={styles.summaryCard}>
+          <div style={styles.summaryLabel}>ຍອດຂາຍມື້ນີ້</div>
+          <div style={styles.summaryValue}>{fmt(todayRevenue)} ກີບ</div>
+        </div>
+        <div style={styles.summaryCard}>
+          <div style={styles.summaryLabel}>ກຳໄລມື້ນີ້</div>
+          <div style={{ ...styles.summaryValue, color: "#3B6D11" }}>{fmt(todayProfit)} ກີບ</div>
+        </div>
+      </div>
+      {lowStock.length > 0 && (
+        <div style={{ ...styles.summaryCard, marginBottom: 16 }}>
+          <div style={styles.summaryLabel}>ສິນຄ້າໃກ້ໝົດ</div>
+          <div style={{ ...styles.summaryValue, color: "#A32D2D" }}>{lowStock.length} ລາຍການ</div>
+        </div>
+      )}
+
+      {toast && <div style={styles.toast}>{toast}</div>}
+
+      <div style={styles.tabs}>
+        <button style={tab === "stock" ? styles.tabActive : styles.tab} onClick={() => setTab("stock")}>
+          ສິນຄ້າ
+        </button>
+        <button style={tab === "sell" ? styles.tabActive : styles.tab} onClick={() => setTab("sell")}>
+          ຂາຍເຄື່ອງ
+        </button>
+        <button style={tab === "report" ? styles.tabActive : styles.tab} onClick={() => setTab("report")}>
+          ລາຍງານ
+        </button>
+      </div>
+
+      {tab === "stock" && (
+        <div>
+          <div style={styles.filterRow}>
+            <button
+              style={filterCat === "all" ? styles.chipActive : styles.chip}
+              onClick={() => setFilterCat("all")}
+            >
+              ທັງໝົດ
+            </button>
+            {CATEGORIES.map((c) => (
+              <button
+                key={c.id}
+                style={
+                  filterCat === c.id
+                    ? { ...styles.chipActive, background: c.bg, color: c.color, borderColor: c.color }
+                    : styles.chip
+                }
+                onClick={() => setFilterCat(c.id)}
+              >
+                {c.label}
+              </button>
+            ))}
+          </div>
+
+          {filteredProducts.length === 0 ? (
+            <div style={styles.emptyState}>
+              <p style={styles.emptyTitle}>ຍັງບໍ່ມີສິນຄ້າ</p>
+              <p style={styles.emptyBody}>ເພີ່ມສິນຄ້າທຳອິດຂອງເຈົ້າ ເພື່ອເລີ່ມຕິດຕາມສາງເຄື່ອງ</p>
+            </div>
+          ) : (
+            <div style={styles.list}>
+              {filteredProducts.map((p) => {
+                const c = catInfo(p.category);
+                const loss = p.price <= (p.cost || 0);
+                return (
+                  <div key={p.id} style={styles.productRow} onClick={() => openEditForm(p)}>
+                    <div style={{ ...styles.catDot, background: c.color }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={styles.productName}>{p.name}</div>
+                      <div style={styles.productMeta}>
+                        ຂາຍ {fmt(p.price)} ​· ທຶນ {fmt(p.cost || 0)} ກີບ / {p.unit}
+                      </div>
+                      {p.lastRestocked && (
+                        <div style={styles.dateMeta}>ນຳເຂົ້າ {shortDate(dateStr(p.lastRestocked))}</div>
+                      )}
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div
+                        style={{
+                          ...styles.stockBadge,
+                          background: p.stock <= 5 ? "#FCEBEB" : "#F1EFE8",
+                          color: p.stock <= 5 ? "#791F1F" : "#5F5E5A",
+                        }}
+                      >
+                        {fmt(p.stock)} {p.unit}
+                      </div>
+                      {loss ? (
+                        <div style={styles.lossText}>ຂາດທຶນ {fmt((p.cost || 0) - p.price)}</div>
+                      ) : (
+                        <div style={styles.marginText}>+{fmt(p.price - (p.cost || 0))} ກຳໄລ</div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <button style={styles.fab} onClick={openNewForm} aria-label="ເພີ່ມສິນຄ້າ">
+            <i className="ti ti-plus" style={{ fontSize: 22 }} aria-hidden="true" />
+          </button>
+        </div>
+      )}
+
+      {tab === "sell" && (
+        <div>
+          {products.length === 0 ? (
+            <div style={styles.emptyState}>
+              <p style={styles.emptyTitle}>ຍັງບໍ່ມີສິນຄ້າໃຫ້ຂາຍ</p>
+              <p style={styles.emptyBody}>ໄປທີ່ແທັບ "ສິນຄ້າ" ເພື່ອເພີ່ມສິນຄ້າກ່ອນ</p>
+            </div>
+          ) : (
+            <div style={styles.list}>
+              {products.map((p) => {
+                const qty = saleCart[p.id] || 0;
+                const c = catInfo(p.category);
+                return (
+                  <div key={p.id} style={styles.productRow}>
+                    <div style={{ ...styles.catDot, background: c.color }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={styles.productName}>{p.name}</div>
+                      <div style={styles.productMeta}>
+                        {fmt(p.price)} ກີບ ​· ເຫຼືອ {fmt(p.stock)} {p.unit}
+                      </div>
+                    </div>
+                    <div style={styles.qtyControl}>
+                      <button
+                        style={styles.qtyBtn}
+                        onClick={() => adjustCart(p.id, -1, p.stock)}
+                        disabled={qty === 0}
+                        aria-label="ຫຼຸດຈຳນວນ"
+                      >
+                        <i className="ti ti-minus" style={{ fontSize: 14 }} aria-hidden="true" />
+                      </button>
+                      <span style={styles.qtyValue}>{qty}</span>
+                      <button
+                        style={styles.qtyBtn}
+                        onClick={() => adjustCart(p.id, 1, p.stock)}
+                        disabled={qty >= p.stock}
+                        aria-label="ເພີ່ມຈຳນວນ"
+                      >
+                        <i className="ti ti-plus" style={{ fontSize: 14 }} aria-hidden="true" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {cartItems.length > 0 && (
+            <div style={styles.cartBar}>
+              <div>
+                <div style={styles.cartLabel}>{cartItems.length} ລາຍການ</div>
+                <div style={styles.cartTotal}>{fmt(cartTotal)} ກີບ</div>
+              </div>
+              <button style={styles.completeBtn} onClick={completeSale}>
+                ບັນທຶກການຂາຍ
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === "report" && (
+        <div>
+          <div style={styles.sectionLabel}>ກຳໄລ 7 ວັນຫຼ້າສຸດ</div>
+          <div style={styles.chartWrap}>
+            {chartData.map((d) => {
+              const h = Math.max(2, (Math.abs(d.profit) / maxChartVal) * 80);
+              return (
+                <div key={d.date} style={styles.chartCol}>
+                  <div style={styles.chartBarTrack}>
+                    <div
+                      style={{
+                        ...styles.chartBar,
+                        height: `${h}px`,
+                        background: d.profit < 0 ? "#E24B4A" : "#639922",
+                      }}
+                    />
+                  </div>
+                  <div style={styles.chartLabel}>{shortDate(d.date)}</div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "20px 0 10px" }}>
+            <span style={styles.sectionLabel}>ລາຍງານປະຈຳວັນ</span>
+            <input
+              type="date"
+              value={reportDate}
+              max={todayStr()}
+              onChange={(e) => setReportDate(e.target.value)}
+              style={styles.dateInput}
+            />
+          </div>
+
+          <div style={styles.summaryRow}>
+            <div style={styles.summaryCard}>
+              <div style={styles.summaryLabel}>ຍອດຂາຍ</div>
+              <div style={styles.summaryValue}>{fmt(reportRevenue)} ກີບ</div>
+            </div>
+            <div style={styles.summaryCard}>
+              <div style={styles.summaryLabel}>ກຳໄລ</div>
+              <div style={{ ...styles.summaryValue, color: reportProfit < 0 ? "#A32D2D" : "#3B6D11" }}>
+                {fmt(reportProfit)} ກີບ
+              </div>
+            </div>
+          </div>
+
+          {reportSales.length === 0 ? (
+            <div style={styles.emptyState}>
+              <p style={styles.emptyTitle}>ບໍ່ມີການຂາຍໃນວັນນີ້</p>
+              <p style={styles.emptyBody}>ລອງເລືອກວັນທີອື່ນ ຫຼືໄປບັນທຶກການຂາຍໃໝ່</p>
+            </div>
+          ) : (
+            <div style={styles.list}>
+              {reportSales.map((s) => (
+                <div key={s.id} style={styles.saleRow}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                    <span style={styles.saleTime}>
+                      {new Date(s.time).toLocaleTimeString("lo-LA", { hour: "2-digit", minute: "2-digit" })}
+                    </span>
+                    <span style={styles.saleAmount}>
+                      {fmt(s.total)} ກີບ
+                      <span style={styles.saleProfit}> (ກຳໄລ {fmt(s.profit || 0)})</span>
+                    </span>
+                  </div>
+                  <div style={styles.saleItems}>
+                    {s.items.map((it, i) => (
+                      <span key={i}>
+                        {it.name} x{fmt(it.qty)}
+                        {i < s.items.length - 1 ? ", " : ""}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div style={{ marginTop: 24 }}>
+            <div style={styles.sectionLabel}>ຄຳແນະນຳ ບໍ່ໃຫ້ຂາດທຶນ</div>
+            <div style={styles.adviceCard}>
+              <div style={styles.adviceRow}>
+                <span style={styles.adviceLabel}>ມູນຄ່າສາງທັງໝົດ (ຕົ້ນທຶນ)</span>
+                <span style={styles.adviceValue}>{fmt(totalInvestment)} ກີບ</span>
+              </div>
+              <div style={styles.adviceRow}>
+                <span style={styles.adviceLabel}>ຖ້າຂາຍໝົດຈະໄດ້ກຳໄລປະມານ</span>
+                <span style={{ ...styles.adviceValue, color: potentialProfit < 0 ? "#A32D2D" : "#3B6D11" }}>
+                  {fmt(potentialProfit)} ກີບ
+                </span>
+              </div>
+            </div>
+
+            {lossProducts.length > 0 ? (
+              <div style={{ marginTop: 10 }}>
+                <div style={styles.warnBanner}>
+                  ມີ {lossProducts.length} ລາຍການ ຂາຍໃນລາຄາທີ່ຕໍ່າກວ່າ ຫຼືເທົ່າກັບຕົ້ນທຶນ ​— ຈະຂາດທຶນຖ້າຂາຍໃນລາຄານີ້
+                </div>
+                <div style={styles.list}>
+                  {lossProducts.map((p) => {
+                    const suggested = Math.ceil(((p.cost || 0) * 1.15) / 100) * 100;
+                    return (
+                      <div key={p.id} style={styles.productRow} onClick={() => openEditForm(p)}>
+                        <div style={{ flex: 1 }}>
+                          <div style={styles.productName}>{p.name}</div>
+                          <div style={styles.lossText}>
+                            ຂາຍ {fmt(p.price)} ​· ທຶນ {fmt(p.cost || 0)} ກີບ
+                          </div>
+                        </div>
+                        <div style={styles.suggestBadge}>ຄວນຂາຍ ≥ {fmt(suggested)}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : (
+              <div style={styles.okBanner}>ທຸກສິນຄ້າຕັ້ງລາຄາຂາຍສູງກວ່າຕົ້ນທຶນແລ້ວ ດີຫຼາຍ</div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {showForm && editing && (
+        <div style={styles.modalOverlay} onClick={() => { setShowForm(false); setEditing(null); }}>
+          <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.modalHeader}>
+              <span style={styles.modalTitle}>{editing.id ? "ແກ້ໄຂສິນຄ້າ" : "ເພີ່ມສິນຄ້າໃໝ່"}</span>
+              <button
+                style={styles.closeBtn}
+                onClick={() => { setShowForm(false); setEditing(null); }}
+                aria-label="ປິດ"
+              >
+                <i className="ti ti-x" style={{ fontSize: 18 }} aria-hidden="true" />
+              </button>
+            </div>
+            <form onSubmit={handleSaveProduct}>
+              <label style={styles.formLabel}>ຊື່ສິນຄ້າ</label>
+              <input
+                style={styles.input}
+                value={editing.name}
+                onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+                placeholder="ຕົວຢ່າງ: ຜັກກາດ"
+              />
+
+              <label style={styles.formLabel}>ໝວດໝູ່</label>
+              <select
+                style={styles.input}
+                value={editing.category}
+                onChange={(e) => setEditing({ ...editing, category: e.target.value })}
+              >
+                {CATEGORIES.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+
+              <div style={{ display: "flex", gap: 12 }}>
+                <div style={{ flex: 1 }}>
+                  <label style={styles.formLabel}>ຕົ້ນທຶນ (ກີບ)</label>
+                  <input
+                    style={styles.input}
+                    type="number"
+                    inputMode="decimal"
+                    value={editing.cost}
+                    onChange={(e) => setEditing({ ...editing, cost: e.target.value })}
+                    placeholder="0"
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={styles.formLabel}>ລາຄາຂາຍ (ກີບ)</label>
+                  <input
+                    style={styles.input}
+                    type="number"
+                    inputMode="decimal"
+                    value={editing.price}
+                    onChange={(e) => setEditing({ ...editing, price: e.target.value })}
+                    placeholder="0"
+                  />
+                </div>
+              </div>
+
+              <label style={styles.formLabel}>ຫົວໜ່ວຍ</label>
+              <select
+                style={styles.input}
+                value={editing.unit}
+                onChange={(e) => setEditing({ ...editing, unit: e.target.value })}
+              >
+                {UNITS.map((u) => (
+                  <option key={u} value={u}>
+                    {u}
+                  </option>
+                ))}
+              </select>
+
+              <label style={styles.formLabel}>ຈຳນວນໃນສາງ</label>
+              <input
+                style={styles.input}
+                type="number"
+                inputMode="decimal"
+                value={editing.stock}
+                onChange={(e) => setEditing({ ...editing, stock: e.target.value })}
+                placeholder="0"
+              />
+              {editing.id && (
+                <p style={styles.hintText}>
+                  ຖ້າເພີ່ມຈຳນວນຫຼາຍກວ່າເກົ່າ ລະບົບຈະຖືວ່າເປັນການນຳເຂົ້າສາງໃໝ່ ແລະ ບັນທຶກວັນທີໃຫ້ອັດຕະໂນມັດ
+                </p>
+              )}
+              {editing.dateAdded && (
+                <p style={styles.hintText}>ເພີ່ມສິນຄ້ານີ້ວັນທີ {shortDate(dateStr(editing.dateAdded))}</p>
+              )}
+
+              <div style={{ display: "flex", gap: 8, marginTop: 20 }}>
+                {editing.id && (
+                  <button
+                    type="button"
+                    style={styles.deleteBtn}
+                    onClick={() => handleDeleteProduct(editing.id)}
+                  >
+                    ລຶບ
+                  </button>
+                )}
+                <button type="submit" style={styles.saveBtn}>
+                  {editing.id ? "ບັນທຶກການແກ້ໄຂ" : "ເພີ່ມສິນຄ້າ"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {showBackup && (
+        <div style={styles.modalOverlay} onClick={() => { setShowBackup(false); setImportError(""); }}>
+          <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.modalHeader}>
+              <span style={styles.modalTitle}>ສຳຮອງ / ກູ້ຄືນຂໍ້ມູນ</span>
+              <button
+                style={styles.closeBtn}
+                onClick={() => { setShowBackup(false); setImportError(""); }}
+                aria-label="ປິດ"
+              >
+                <i className="ti ti-x" style={{ fontSize: 18 }} aria-hidden="true" />
+              </button>
+            </div>
+
+            <p style={styles.hintText}>
+              ຖ້າແອັບບໍ່ສາມາດບັນທຶກຂໍ້ມູນອັດຕະໂນມັດໄດ້ ໃຫ້ກ໊ອບຂໍ້ຄວາມນີ້ໄປເກັບໄວ້ (ເຊັ່ນ ວາງໃສ່ Notes ຫຼືສົ່ງຫາຕົນເອງໃນແຊັດ) ແລ້ວນຳມາວາງຄືນຢູ່ນີ້ໃນຄັ້ງໜ້າ
+            </p>
+
+            <label style={styles.formLabel}>ຂໍ້ມູນປັດຈຸບັນ (ສຳລັບກ໊ອບໄປເກັບໄວ້)</label>
+            <textarea
+              readOnly
+              style={styles.textarea}
+              value={JSON.stringify({ products, sales })}
+              onFocus={(e) => e.target.select()}
+            />
+
+            <label style={styles.formLabel}>ວາງຂໍ້ມູນເກົ່າທີ່ນີ້ ເພື່ອກູ້ຄືນ</label>
+            <textarea
+              style={styles.textarea}
+              value={importText}
+              onChange={(e) => { setImportText(e.target.value); setImportError(""); }}
+              placeholder="ວາງຂໍ້ຄວາມທີ່ເຄີຍກ໊ອບໄວ້ຢູ່ນີ້"
+            />
+            {importError && <p style={{ color: "#A32D2D", fontSize: 12, marginTop: 4 }}>{importError}</p>}
+
+            <button
+              style={{ ...styles.saveBtn, width: "100%", marginTop: 12 }}
+              onClick={handleImport}
+              disabled={!importText.trim()}
+            >
+              ນຳເຂົ້າຂໍ້ມູນນີ້
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const styles = {
+  app: {
+    fontFamily: "'Noto Sans Lao', 'Noto Sans', sans-serif",
+    maxWidth: 480,
+    margin: "0 auto",
+    padding: "16px",
+    color: "#2C2C2A",
+    position: "relative",
+    minHeight: 400,
+  },
+  loadingWrap: { padding: 40, textAlign: "center" },
+  header: { marginBottom: 16, display: "flex", alignItems: "flex-start", justifyContent: "space-between" },
+  headerTitle: { fontSize: 22, fontWeight: 500 },
+  headerSub: { fontSize: 14, color: "#5F5E5A", marginTop: 2 },
+  backupBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: "50%",
+    border: "1px solid #D3D1C7",
+    background: "#fff",
+    color: "#5F5E5A",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "pointer",
+    flexShrink: 0,
+  },
+  textarea: {
+    width: "100%",
+    boxSizing: "border-box",
+    minHeight: 70,
+    padding: "10px 12px",
+    border: "1px solid #D3D1C7",
+    borderRadius: 8,
+    fontSize: 12,
+    fontFamily: "monospace",
+    resize: "vertical",
+  },
+  summaryRow: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 },
+  summaryCard: { background: "#F1EFE8", borderRadius: 10, padding: "12px 14px" },
+  summaryLabel: { fontSize: 12, color: "#5F5E5A", marginBottom: 4 },
+  summaryValue: { fontSize: 18, fontWeight: 500 },
+  toast: {
+    position: "fixed",
+    bottom: 20,
+    left: "50%",
+    transform: "translateX(-50%)",
+    background: "#2C2C2A",
+    color: "#fff",
+    padding: "10px 18px",
+    borderRadius: 20,
+    fontSize: 14,
+    zIndex: 50,
+  },
+  tabs: { display: "flex", gap: 6, marginBottom: 16, borderBottom: "1px solid #D3D1C7" },
+  tab: {
+    flex: 1,
+    background: "none",
+    border: "none",
+    padding: "10px 4px",
+    fontSize: 14,
+    color: "#5F5E5A",
+    cursor: "pointer",
+    borderBottom: "2px solid transparent",
+  },
+  tabActive: {
+    flex: 1,
+    background: "none",
+    border: "none",
+    padding: "10px 4px",
+    fontSize: 14,
+    fontWeight: 500,
+    color: "#3B6D11",
+    cursor: "pointer",
+    borderBottom: "2px solid #3B6D11",
+  },
+  filterRow: { display: "flex", gap: 8, overflowX: "auto", paddingBottom: 8, marginBottom: 8 },
+  chip: {
+    whiteSpace: "nowrap",
+    padding: "6px 14px",
+    borderRadius: 16,
+    border: "1px solid #D3D1C7",
+    background: "#fff",
+    fontSize: 13,
+    color: "#5F5E5A",
+    cursor: "pointer",
+  },
+  chipActive: {
+    whiteSpace: "nowrap",
+    padding: "6px 14px",
+    borderRadius: 16,
+    border: "1px solid #2C2C2A",
+    background: "#2C2C2A",
+    fontSize: 13,
+    color: "#fff",
+    cursor: "pointer",
+  },
+  list: { display: "flex", flexDirection: "column", gap: 8 },
+  productRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    background: "#fff",
+    border: "1px solid #E5E3DB",
+    borderRadius: 10,
+    padding: "10px 12px",
+    cursor: "pointer",
+  },
+  catDot: { width: 8, height: 8, borderRadius: "50%", flexShrink: 0 },
+  productName: { fontSize: 15, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  productMeta: { fontSize: 12, color: "#5F5E5A", marginTop: 2 },
+  dateMeta: { fontSize: 11, color: "#888780", marginTop: 2 },
+  stockBadge: { fontSize: 12, padding: "3px 8px", borderRadius: 10, whiteSpace: "nowrap" },
+  stockBadge2: { fontSize: 12, padding: "3px 8px", borderRadius: 10, background: "#FCEBEB", color: "#791F1F", whiteSpace: "nowrap" },
+  marginText: { fontSize: 11, color: "#3B6D11", marginTop: 3 },
+  lossText: { fontSize: 11, color: "#A32D2D", marginTop: 3 },
+  saleProfit: { fontSize: 11, color: "#5F5E5A", fontWeight: 400 },
+  suggestBadge: { fontSize: 11, color: "#854F0B", background: "#FAEEDA", padding: "3px 8px", borderRadius: 10, whiteSpace: "nowrap" },
+  emptyState: { textAlign: "center", padding: "40px 20px", color: "#5F5E5A" },
+  emptyTitle: { fontSize: 15, fontWeight: 500, marginBottom: 4, color: "#2C2C2A" },
+  emptyBody: { fontSize: 13 },
+  fab: {
+    position: "fixed",
+    bottom: 24,
+    right: "max(24px, calc(50% - 216px))",
+    width: 52,
+    height: 52,
+    borderRadius: "50%",
+    background: "#3B6D11",
+    color: "#fff",
+    border: "none",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "pointer",
+    zIndex: 40,
+  },
+  qtyControl: { display: "flex", alignItems: "center", gap: 8 },
+  qtyBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: "50%",
+    border: "1px solid #D3D1C7",
+    background: "#fff",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "pointer",
+  },
+  qtyValue: { minWidth: 20, textAlign: "center", fontSize: 14, fontWeight: 500 },
+  cartBar: {
+    position: "sticky",
+    bottom: 12,
+    marginTop: 16,
+    background: "#2C2C2A",
+    color: "#fff",
+    borderRadius: 12,
+    padding: "12px 16px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  cartLabel: { fontSize: 12, opacity: 0.8 },
+  cartTotal: { fontSize: 18, fontWeight: 500 },
+  completeBtn: {
+    background: "#fff",
+    color: "#2C2C2A",
+    border: "none",
+    borderRadius: 8,
+    padding: "10px 16px",
+    fontSize: 14,
+    fontWeight: 500,
+    cursor: "pointer",
+  },
+  sectionLabel: { fontSize: 14, fontWeight: 500, marginBottom: 10 },
+  saleRow: { background: "#fff", border: "1px solid #E5E3DB", borderRadius: 10, padding: "10px 12px" },
+  saleTime: { fontSize: 12, color: "#5F5E5A" },
+  saleAmount: { fontSize: 14, fontWeight: 500 },
+  saleItems: { fontSize: 12, color: "#5F5E5A" },
+  dateInput: {
+    padding: "6px 10px",
+    border: "1px solid #D3D1C7",
+    borderRadius: 8,
+    fontSize: 13,
+    fontFamily: "inherit",
+  },
+  chartWrap: {
+    display: "flex",
+    alignItems: "flex-end",
+    gap: 6,
+    height: 110,
+    background: "#F1EFE8",
+    borderRadius: 10,
+    padding: "10px 8px 6px",
+  },
+  chartCol: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 },
+  chartBarTrack: { height: 80, display: "flex", alignItems: "flex-end" },
+  chartBar: { width: "60%", minWidth: 6, borderRadius: "3px 3px 0 0", margin: "0 auto" },
+  chartLabel: { fontSize: 10, color: "#5F5E5A" },
+  adviceCard: { background: "#F1EFE8", borderRadius: 10, padding: "12px 14px" },
+  adviceRow: { display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: 13 },
+  adviceLabel: { color: "#5F5E5A" },
+  adviceValue: { fontWeight: 500 },
+  warnBanner: {
+    background: "#FCEBEB",
+    color: "#791F1F",
+    borderRadius: 10,
+    padding: "10px 12px",
+    fontSize: 13,
+    marginBottom: 8,
+  },
+  okBanner: {
+    background: "#EAF3DE",
+    color: "#3B6D11",
+    borderRadius: 10,
+    padding: "10px 12px",
+    fontSize: 13,
+    marginTop: 8,
+  },
+  modalOverlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(0,0,0,0.4)",
+    display: "flex",
+    alignItems: "flex-end",
+    justifyContent: "center",
+    zIndex: 100,
+  },
+  modal: {
+    background: "#fff",
+    borderRadius: "16px 16px 0 0",
+    padding: "20px",
+    width: "100%",
+    maxWidth: 480,
+    maxHeight: "85vh",
+    overflowY: "auto",
+  },
+  modalHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 },
+  modalTitle: { fontSize: 17, fontWeight: 500 },
+  closeBtn: { background: "none", border: "none", cursor: "pointer", color: "#5F5E5A" },
+  formLabel: { fontSize: 13, color: "#5F5E5A", display: "block", marginTop: 12, marginBottom: 4 },
+  hintText: { fontSize: 11, color: "#888780", marginTop: 8 },
+  input: {
+    width: "100%",
+    boxSizing: "border-box",
+    padding: "10px 12px",
+    border: "1px solid #D3D1C7",
+    borderRadius: 8,
+    fontSize: 15,
+    fontFamily: "inherit",
+  },
+  saveBtn: {
+    flex: 1,
+    background: "#3B6D11",
+    color: "#fff",
+    border: "none",
+    borderRadius: 8,
+    padding: "12px",
+    fontSize: 15,
+    fontWeight: 500,
+    cursor: "pointer",
+  },
+  deleteBtn: {
+    background: "#FCEBEB",
+    color: "#791F1F",
+    border: "none",
+    borderRadius: 8,
+    padding: "12px 16px",
+    fontSize: 15,
+    fontWeight: 500,
+    cursor: "pointer",
+  },
+};
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<ShopApp />);
+</script>
+</body>
+</html>
