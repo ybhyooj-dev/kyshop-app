@@ -1,0 +1,1060 @@
+<!DOCTYPE html>
+<html lang="lo">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>ຮ້ານຂອງຂ້ອຍ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Lao:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/@tabler/icons-webfont@latest/dist/tabler-icons.min.css">
+<style>
+  body { margin: 0; background: #FAFAF7; }
+  * { -webkit-tap-highlight-color: transparent; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+
+<script>
+  window.onerror = function (msg, src, line, col, err) {
+    document.getElementById("root").innerHTML =
+      '<div style="padding:20px;font-family:sans-serif;color:#791F1F;background:#FCEBEB;">' +
+      '<b>ມີຂໍ້ຜິດພາດ:</b><br>' + msg + ' (ແຖວ ' + line + ')</div>';
+  };
+  window.storage = {
+    get: function (key) {
+      return new Promise(function (resolve, reject) {
+        var v = localStorage.getItem(key);
+        if (v === null) { reject(new Error("not found")); return; }
+        resolve({ key: key, value: v, shared: false });
+      });
+    },
+    set: function (key, value) {
+      return new Promise(function (resolve) {
+        localStorage.setItem(key, value);
+        resolve({ key: key, value: value, shared: false });
+      });
+    }
+  };
+  const { useState, useEffect, useCallback, useMemo } = React;
+</script>
+
+<script>
+"use strict";
+const CATEGORIES = [
+    { id: "vegetable", label: "ຜັກ", color: "#3B6D11", bg: "#EAF3DE" },
+    { id: "fish", label: "ປາ", color: "#185FA5", bg: "#E6F1FB" },
+    { id: "seasoning", label: "ເຄື່ອງປຸງ", color: "#854F0B", bg: "#FAEEDA" },
+    { id: "bath", label: "ເຄື່ອງໃຊ້ອາບນ້ຳ", color: "#534AB7", bg: "#EEEDFE" },
+    { id: "soap", label: "ສະບູ", color: "#993556", bg: "#FBEAF0" },
+    { id: "food", label: "ອາຫານ", color: "#B15A3E", bg: "#FBEDE6" },
+];
+const DEFAULT_NAMES = {
+    vegetable: ["ຜັກກາດຂຽວ", "ຜັກກາດຂາວ", "ກະລຳປີ", "ໝາກແຕງ", "ໝາກກ້ວຍ", "ຜັກກວາງຕຸ້ງ"],
+    fish: ["ປານິນ", "ປາດຸກ", "ປາໄນ"],
+    seasoning: ["ເກືອ", "ແປ້ງນົວ", "ນ້ຳປາ", "ຄະນໍ", "ປາແດກ", "ກະປິ", "ແຈ່ວ"],
+    bath: [],
+    soap: ["ແຝັກ", "ສະບູຝຸ່ນໄທ", "ສະບູກ້ອນ", "ຢາສະຜົມຍິງ"],
+    food: ["ປາກະປ໋ອງ", "ໝີ່ໄວໄວ", "ໝີ່ຢຳຢຳຂຽວ", "ໝີ່ຢຳຢຳແດງ"],
+};
+const UNITS = ["ກິບ", "ໂຕ", "ຊິ້ນ", "ຂວດ", "ຫໍ່", "ກ້ອນ", "ກຣາມ", "ກິໂລ", "ຖົງ", "ມັດ", "ໜ່ວຍ", "ຫວີ"];
+function uid() {
+    return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+function fmt(n) {
+    return Math.round(Number(n || 0)).toLocaleString("lo-LA");
+}
+function todayStr() {
+    const d = new Date();
+    return d.toISOString().slice(0, 10);
+}
+function dateStr(iso) {
+    return new Date(iso).toISOString().slice(0, 10);
+}
+function shortDate(dstr) {
+    const [y, m, d] = dstr.split("-");
+    return `${d}/${m}`;
+}
+function lastNDays(n) {
+    const days = [];
+    const now = new Date();
+    for (let i = n - 1; i >= 0; i--) {
+        const d = new Date(now);
+        d.setDate(d.getDate() - i);
+        days.push(d.toISOString().slice(0, 10));
+    }
+    return days;
+}
+function ShopApp() {
+    const [products, setProducts] = useState([]);
+    const [sales, setSales] = useState([]);
+    const [loaded, setLoaded] = useState(false);
+    const [tab, setTab] = useState("stock"); // stock | sell | report
+    const [showForm, setShowForm] = useState(false);
+    const [editing, setEditing] = useState(null);
+    const [filterCat, setFilterCat] = useState("all");
+    const [saleCart, setSaleCart] = useState({}); // productId -> qty
+    const [toast, setToast] = useState("");
+    const [reportDate, setReportDate] = useState(todayStr());
+    const [storageOk, setStorageOk] = useState(true);
+    const [showBackup, setShowBackup] = useState(false);
+    const [importText, setImportText] = useState("");
+    const [importError, setImportError] = useState("");
+    const [customNames, setCustomNames] = useState({});
+    const [addingName, setAddingName] = useState(false);
+    const [newNameInput, setNewNameInput] = useState("");
+    const [pin, setPin] = useState(null);
+    const [locked, setLocked] = useState(false);
+    const [pinInput, setPinInput] = useState("");
+    const [pinError, setPinError] = useState("");
+    const [showPinSetup, setShowPinSetup] = useState(false);
+    const [newPinInput, setNewPinInput] = useState("");
+    const [search, setSearch] = useState("");
+    const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+    const [lastReceipt, setLastReceipt] = useState(null);
+    const [lastCompletedSale, setLastCompletedSale] = useState(null);
+    useEffect(() => {
+        (async () => {
+            if (!window.storage || typeof window.storage.get !== "function") {
+                setStorageOk(false);
+                setLoaded(true);
+                return;
+            }
+            try {
+                const p = await window.storage.get("products");
+                if (p && p.value)
+                    setProducts(JSON.parse(p.value));
+            }
+            catch (e) { }
+            try {
+                const s = await window.storage.get("sales");
+                if (s && s.value)
+                    setSales(JSON.parse(s.value));
+            }
+            catch (e) { }
+            try {
+                const cn = await window.storage.get("customNames");
+                if (cn && cn.value)
+                    setCustomNames(JSON.parse(cn.value));
+            }
+            catch (e) { }
+            try {
+                const pinRes = await window.storage.get("pin");
+                if (pinRes && pinRes.value) {
+                    setPin(pinRes.value);
+                    setLocked(true);
+                }
+            }
+            catch (e) { }
+            setLoaded(true);
+        })();
+    }, []);
+    const saveProducts = useCallback(async (next) => {
+        setProducts(next);
+        try {
+            const res = await window.storage.set("products", JSON.stringify(next));
+            setStorageOk(!!res);
+            if (!res)
+                showToast("ບໍ່ສາມາດບັນທຶກຂໍ້ມູນຖາວອນໄດ້");
+        }
+        catch (e) {
+            setStorageOk(false);
+            showToast("ບໍ່ສາມາດບັນທຶກຂໍ້ມູນຖາວອນໄດ້");
+        }
+    }, []);
+    const saveSales = useCallback(async (next) => {
+        setSales(next);
+        try {
+            const res = await window.storage.set("sales", JSON.stringify(next));
+            setStorageOk(!!res);
+            if (!res)
+                showToast("ບໍ່ສາມາດບັນທຶກຂໍ້ມູນຖາວອນໄດ້");
+        }
+        catch (e) {
+            setStorageOk(false);
+            showToast("ບໍ່ສາມາດບັນທຶກຂໍ້ມູນຖາວອນໄດ້");
+        }
+    }, []);
+    const saveCustomNames = useCallback(async (next) => {
+        setCustomNames(next);
+        try {
+            await window.storage.set("customNames", JSON.stringify(next));
+        }
+        catch (e) { }
+    }, []);
+    function handleAddCustomName() {
+        const name = newNameInput.trim();
+        if (!name || !editing)
+            return;
+        const cat = editing.category;
+        const existing = customNames[cat] || [];
+        if (!existing.includes(name) && !(DEFAULT_NAMES[cat] || []).includes(name)) {
+            saveCustomNames(Object.assign(Object.assign({}, customNames), { [cat]: [...existing, name] }));
+        }
+        setEditing(Object.assign(Object.assign({}, editing), { name }));
+        setNewNameInput("");
+        setAddingName(false);
+    }
+    async function handleSetPin() {
+        const p = newPinInput.trim();
+        if (p.length < 4) {
+            setPinError("ລະຫັດຕ້ອງມີຢ່າງໜ້ອຍ 4 ໂຕເລກ");
+            return;
+        }
+        try {
+            await window.storage.set("pin", p);
+        }
+        catch (e) { }
+        setPin(p);
+        setShowPinSetup(false);
+        setNewPinInput("");
+        setPinError("");
+        showToast("ຕັ້ງລະຫັດແລ້ວ");
+    }
+    async function handleRemovePin() {
+        try {
+            await window.storage.set("pin", "");
+        }
+        catch (e) { }
+        setPin(null);
+        showToast("ເອົາລະຫັດອອກແລ້ວ");
+    }
+    function handleUnlock() {
+        if (pinInput === pin) {
+            setLocked(false);
+            setPinInput("");
+            setPinError("");
+        }
+        else {
+            setPinError("ລະຫັດບໍ່ຖືກຕ້ອງ");
+            setPinInput("");
+        }
+    }
+    function confirmDelete(id) {
+        setConfirmDeleteId(id);
+    }
+    function shareReceipt(sale) {
+        const lines = sale.items.map((it) => `${it.name} x${fmt(it.qty)} = ${fmt(it.price * it.qty)} ກີບ`);
+        const text = `ໃບບິນ\n${lines.join("\n")}\n\nລວມ: ${fmt(sale.total)} ກີບ`;
+        if (navigator.share) {
+            navigator.share({ title: "ໃບບິນ", text }).catch(() => { });
+        }
+        else {
+            setLastReceipt(text);
+        }
+    }
+    function handleImport() {
+        try {
+            const parsed = JSON.parse(importText);
+            if (!parsed || !Array.isArray(parsed.products) || !Array.isArray(parsed.sales)) {
+                setImportError("ຮູບແບບຂໍ້ມູນບໍ່ຖືກຕ້ອງ");
+                return;
+            }
+            saveProducts(parsed.products);
+            saveSales(parsed.sales);
+            setImportError("");
+            setImportText("");
+            setShowBackup(false);
+            showToast("ນຳເຂົ້າຂໍ້ມູນແລ້ວ");
+        }
+        catch (e) {
+            setImportError("ອ່ານຂໍ້ມູນບໍ່ໄດ້ ກວດເບິ່ງວ່າກ໊ອບຂໍ້ຄວາມມາຄົບຫຼືບໍ່");
+        }
+    }
+    function showToast(msg) {
+        setToast(msg);
+        setTimeout(() => setToast(""), 2000);
+    }
+    function openNewForm() {
+        setEditing({
+            id: null,
+            name: "",
+            category: "vegetable",
+            cost: "",
+            price: "",
+            stock: "",
+            unit: "ກິບ",
+        });
+        setAddingName(false);
+        setNewNameInput("");
+        setShowForm(true);
+    }
+    function openEditForm(p) {
+        setEditing(Object.assign(Object.assign({}, p), { cost: String(p.cost || ""), price: String(p.price), stock: String(p.stock) }));
+        setAddingName(false);
+        setNewNameInput("");
+        setShowForm(true);
+    }
+    function handleSaveProduct(e) {
+        e.preventDefault();
+        if (!editing.name.trim()) {
+            showToast("ກະລຸນາໃສ່ຊື່ເຄື່ອງກ່ອນ");
+            return;
+        }
+        const priceNum = parseFloat(editing.price);
+        const stockNum = parseFloat(editing.stock);
+        const costNum = editing.cost === "" ? 0 : parseFloat(editing.cost);
+        if (isNaN(priceNum) || priceNum < 0) {
+            showToast("ລາຄາບໍ່ຖືກຕ້ອງ");
+            return;
+        }
+        if (isNaN(stockNum) || stockNum < 0) {
+            showToast("ຈຳນວນສິນຄ້າບໍ່ຖືກຕ້ອງ");
+            return;
+        }
+        if (isNaN(costNum) || costNum < 0) {
+            showToast("ຕົ້ນທຶນບໍ່ຖືກຕ້ອງ");
+            return;
+        }
+        const nowIso = new Date().toISOString();
+        let next;
+        if (editing.id) {
+            const original = products.find((p) => p.id === editing.id);
+            const restocked = original && stockNum > original.stock;
+            next = products.map((p) => p.id === editing.id
+                ? Object.assign(Object.assign({}, p), { name: editing.name.trim(), category: editing.category, cost: costNum, price: priceNum, stock: stockNum, unit: editing.unit, lastRestocked: restocked ? nowIso : p.lastRestocked }) : p);
+            showToast("ແກ້ໄຂຂໍ້ມູນແລ້ວ");
+        }
+        else {
+            next = [
+                ...products,
+                {
+                    id: uid(),
+                    name: editing.name.trim(),
+                    category: editing.category,
+                    cost: costNum,
+                    price: priceNum,
+                    stock: stockNum,
+                    unit: editing.unit,
+                    dateAdded: nowIso,
+                    lastRestocked: nowIso,
+                },
+            ];
+            showToast("ເພີ່ມສິນຄ້າແລ້ວ");
+        }
+        saveProducts(next);
+        setShowForm(false);
+        setEditing(null);
+    }
+    function handleDeleteProduct(id) {
+        saveProducts(products.filter((p) => p.id !== id));
+        setShowForm(false);
+        setEditing(null);
+        showToast("ລຶບສິນຄ້າແລ້ວ");
+    }
+    function quickAdjustStock(id, delta) {
+        const nowIso = new Date().toISOString();
+        const next = products.map((p) => {
+            if (p.id !== id)
+                return p;
+            const newStock = Math.max(0, p.stock + delta);
+            return Object.assign(Object.assign({}, p), { stock: newStock, lastRestocked: delta > 0 ? nowIso : p.lastRestocked });
+        });
+        saveProducts(next);
+    }
+    function catInfo(id) {
+        return CATEGORIES.find((c) => c.id === id) || CATEGORIES[0];
+    }
+    const filteredProducts = products
+        .filter((p) => filterCat === "all" || p.category === filterCat)
+        .filter((p) => !search.trim() || p.name.toLowerCase().includes(search.trim().toLowerCase()));
+    function adjustCart(id, delta, maxStock) {
+        setSaleCart((prev) => {
+            const cur = prev[id] || 0;
+            let next = cur + delta;
+            if (next < 0)
+                next = 0;
+            if (next > maxStock)
+                next = maxStock;
+            const copy = Object.assign({}, prev);
+            if (next === 0)
+                delete copy[id];
+            else
+                copy[id] = next;
+            return copy;
+        });
+    }
+    const cartItems = Object.entries(saleCart)
+        .map(([id, qty]) => {
+        const prod = products.find((p) => p.id === id);
+        return prod ? Object.assign(Object.assign({}, prod), { qty }) : null;
+    })
+        .filter(Boolean);
+    const cartTotal = cartItems.reduce((sum, it) => sum + it.price * it.qty, 0);
+    function completeSale() {
+        if (cartItems.length === 0)
+            return;
+        const nextProducts = products.map((p) => {
+            const item = cartItems.find((c) => c.id === p.id);
+            return item ? Object.assign(Object.assign({}, p), { stock: Math.max(0, p.stock - item.qty) }) : p;
+        });
+        const cartProfit = cartItems.reduce((sum, it) => sum + (it.price - (it.cost || 0)) * it.qty, 0);
+        const record = {
+            id: uid(),
+            time: new Date().toISOString(),
+            items: cartItems.map((c) => ({ name: c.name, qty: c.qty, price: c.price, cost: c.cost || 0, unit: c.unit })),
+            total: cartTotal,
+            profit: cartProfit,
+        };
+        saveProducts(nextProducts);
+        saveSales([record, ...sales]);
+        setSaleCart({});
+        setLastReceipt(null);
+        setLastCompletedSale(record);
+        showToast("ບັນທຶກການຂາຍແລ້ວ");
+    }
+    const isToday = (iso) => dateStr(iso) === todayStr();
+    const todaySales = sales.filter((s) => isToday(s.time));
+    const todayRevenue = todaySales.reduce((sum, s) => sum + s.total, 0);
+    const todayProfit = todaySales.reduce((sum, s) => sum + (s.profit || 0), 0);
+    const lowStock = products.filter((p) => p.stock <= 5);
+    const reportSales = sales.filter((s) => dateStr(s.time) === reportDate);
+    const reportRevenue = reportSales.reduce((sum, s) => sum + s.total, 0);
+    const reportProfit = reportSales.reduce((sum, s) => sum + (s.profit || 0), 0);
+    // last 7 days profit for chart
+    const chartData = useMemo(() => {
+        const days = lastNDays(7);
+        return days.map((d) => {
+            const dayProfit = sales
+                .filter((s) => dateStr(s.time) === d)
+                .reduce((sum, s) => sum + (s.profit || 0), 0);
+            return { date: d, profit: dayProfit };
+        });
+    }, [sales]);
+    const maxChartVal = Math.max(1, ...chartData.map((d) => Math.abs(d.profit)));
+    // loss-prevention advisor
+    const lossProducts = products.filter((p) => p.price <= (p.cost || 0));
+    const totalInvestment = products.reduce((sum, p) => sum + (p.cost || 0) * p.stock, 0);
+    const potentialProfit = products.reduce((sum, p) => sum + (p.price - (p.cost || 0)) * p.stock, 0);
+    if (!loaded) {
+        return (React.createElement("div", { style: styles.loadingWrap },
+            React.createElement("p", { style: { color: "#5F5E5A" } }, "\u0E81\u0EB3\u0EA5\u0EB1\u0E87\u0EC2\u0EAB\u0EA5\u0E94...")));
+    }
+    if (locked) {
+        return (React.createElement("div", { style: styles.lockScreen },
+            React.createElement("div", { style: styles.lockBox },
+                React.createElement("i", { className: "ti ti-lock", style: { fontSize: 32, color: "#5F5E5A" }, "aria-hidden": "true" }),
+                React.createElement("p", { style: styles.lockTitle }, "\u0EC3\u0EAA\u0EC8\u0EA5\u0EB0\u0EAB\u0EB1\u0E94\u0EC0\u0E9E\u0EB7\u0EC8\u0EAD\u0EC0\u0E9B\u0EB5\u0E94\u0EC1\u0EAD\u0EB1\u0E9A"),
+                React.createElement("input", { style: styles.input, type: "password", inputMode: "numeric", value: pinInput, onChange: (e) => setPinInput(e.target.value), onKeyDown: (e) => e.key === "Enter" && handleUnlock(), placeholder: "****", autoFocus: true }),
+                pinError && React.createElement("p", { style: { color: "#A32D2D", fontSize: 12, marginTop: 6 } }, pinError),
+                React.createElement("button", { style: Object.assign(Object.assign({}, styles.saveBtn), { width: "100%", marginTop: 12 }), onClick: handleUnlock }, "\u0EC0\u0E9B\u0EB5\u0E94\u0EC1\u0EAD\u0EB1\u0E9A"))));
+    }
+    return (React.createElement("div", { style: styles.app },
+        React.createElement("div", { style: styles.header },
+            React.createElement("div", null,
+                React.createElement("div", { style: styles.headerTitle }, "\u0EAE\u0EC9\u0EB2\u0E99\u0E82\u0EAD\u0E87\u0E82\u0EC9\u0EAD\u0E8D"),
+                React.createElement("div", { style: styles.headerSub }, "\u0E88\u0EB1\u0E94\u0E81\u0EB2\u0E99\u0EAA\u0EB4\u0E99\u0E84\u0EC9\u0EB2 \u0EC1\u0EA5\u0EB0 \u0E81\u0EB2\u0E99\u0E82\u0EB2\u0E8D")),
+            React.createElement("div", { style: { display: "flex", gap: 8 } },
+                React.createElement("button", { style: styles.backupBtn, onClick: () => (pin ? setLocked(true) : setShowPinSetup(true)), "aria-label": "\u0E84\u0EA7\u0EB2\u0EA1\u0E9B\u0EAD\u0E94\u0EC4\u0E9E" },
+                    React.createElement("i", { className: pin ? "ti ti-lock" : "ti ti-lock-open", style: { fontSize: 18 }, "aria-hidden": "true" })),
+                React.createElement("button", { style: styles.backupBtn, onClick: () => setShowBackup(true), "aria-label": "\u0EAA\u0EB3\u0EAE\u0EAD\u0E87\u0E82\u0ECD\u0EC9\u0EA1\u0EB9\u0E99" },
+                    React.createElement("i", { className: "ti ti-cloud-upload", style: { fontSize: 18 }, "aria-hidden": "true" })))),
+        !storageOk && (React.createElement("div", { style: styles.warnBanner },
+            "\u0E9A\u0ECD\u0EC8\u0EAA\u0EB2\u0EA1\u0EB2\u0E94\u0E9A\u0EB1\u0E99\u0E97\u0EB6\u0E81\u0E82\u0ECD\u0EC9\u0EA1\u0EB9\u0E99\u0E96\u0EB2\u0EA7\u0EAD\u0E99\u0EC3\u0E99\u0EAD\u0EB8\u0E9B\u0EB0\u0E81\u0EAD\u0E99\u0E99\u0EB5\u0EC9\u0EC4\u0E94\u0EC9 \u200B\u2014 \u0E82\u0ECD\u0EC9\u0EA1\u0EB9\u0E99\u0EAD\u0EB2\u0E94\u0EAB\u0EB2\u0E8D\u0EC4\u0E9B\u0EC0\u0EA1\u0EB7\u0EC8\u0EAD\u0E9B\u0EB4\u0E94\u0EC1\u0EAD\u0EB1\u0E9A. \u0EC3\u0EAB\u0EC9\u0E81\u0EBB\u0E94\u0E9B\u0EB8\u0EC8\u0EA1 ",
+            React.createElement("i", { className: "ti ti-cloud-upload", "aria-hidden": "true" }),
+            " \u0E94\u0EC9\u0EB2\u0E99\u0EC0\u0E97\u0EB4\u0E87 \u0EC0\u0E9E\u0EB7\u0EC8\u0EAD\u0E81\u0ECA\u0EAD\u0E9A\u0E82\u0ECD\u0EC9\u0EA1\u0EB9\u0E99\u0EC4\u0E9B\u0EC0\u0E81\u0EB1\u0E9A\u0EC4\u0EA7\u0EC9 \u0EC1\u0EA5\u0EC9\u0EA7\u0E99\u0EB3\u0E81\u0EB1\u0E9A\u0EC0\u0E82\u0EBB\u0EC9\u0EB2\u0EA1\u0EB2\u0E84\u0EB1\u0EC9\u0E87\u0EDC\u0EC9\u0EB2")),
+        React.createElement("div", { style: styles.summaryRow },
+            React.createElement("div", { style: styles.summaryCard },
+                React.createElement("div", { style: styles.summaryLabel }, "\u0E8D\u0EAD\u0E94\u0E82\u0EB2\u0E8D\u0EA1\u0EB7\u0EC9\u0E99\u0EB5\u0EC9"),
+                React.createElement("div", { style: styles.summaryValue },
+                    fmt(todayRevenue),
+                    " \u0E81\u0EB5\u0E9A")),
+            React.createElement("div", { style: styles.summaryCard },
+                React.createElement("div", { style: styles.summaryLabel }, "\u0E81\u0EB3\u0EC4\u0EA5\u0EA1\u0EB7\u0EC9\u0E99\u0EB5\u0EC9"),
+                React.createElement("div", { style: Object.assign(Object.assign({}, styles.summaryValue), { color: "#3B6D11" }) },
+                    fmt(todayProfit),
+                    " \u0E81\u0EB5\u0E9A"))),
+        lowStock.length > 0 && (React.createElement("div", { style: Object.assign(Object.assign({}, styles.summaryCard), { marginBottom: 16 }) },
+            React.createElement("div", { style: styles.summaryLabel }, "\u0EAA\u0EB4\u0E99\u0E84\u0EC9\u0EB2\u0EC3\u0E81\u0EC9\u0EDD\u0EBB\u0E94"),
+            React.createElement("div", { style: Object.assign(Object.assign({}, styles.summaryValue), { color: "#A32D2D" }) },
+                lowStock.length,
+                " \u0EA5\u0EB2\u0E8D\u0E81\u0EB2\u0E99"))),
+        toast && React.createElement("div", { style: styles.toast }, toast),
+        React.createElement("div", { style: styles.tabs },
+            React.createElement("button", { style: tab === "stock" ? styles.tabActive : styles.tab, onClick: () => setTab("stock") }, "\u0EAA\u0EB4\u0E99\u0E84\u0EC9\u0EB2"),
+            React.createElement("button", { style: tab === "sell" ? styles.tabActive : styles.tab, onClick: () => setTab("sell") }, "\u0E82\u0EB2\u0E8D\u0EC0\u0E84\u0EB7\u0EC8\u0EAD\u0E87"),
+            React.createElement("button", { style: tab === "report" ? styles.tabActive : styles.tab, onClick: () => setTab("report") }, "\u0EA5\u0EB2\u0E8D\u0E87\u0EB2\u0E99")),
+        tab === "stock" && (React.createElement("div", null,
+            React.createElement("input", { style: Object.assign(Object.assign({}, styles.input), { marginBottom: 10 }), value: search, onChange: (e) => setSearch(e.target.value), placeholder: "\u0E84\u0EBB\u0EC9\u0E99\u0EAB\u0EB2\u0EAA\u0EB4\u0E99\u0E84\u0EC9\u0EB2..." }),
+            React.createElement("div", { style: styles.filterRow },
+                React.createElement("button", { style: filterCat === "all" ? styles.chipActive : styles.chip, onClick: () => setFilterCat("all") }, "\u0E97\u0EB1\u0E87\u0EDD\u0EBB\u0E94"),
+                CATEGORIES.map((c) => (React.createElement("button", { key: c.id, style: filterCat === c.id
+                        ? Object.assign(Object.assign({}, styles.chipActive), { background: c.bg, color: c.color, borderColor: c.color }) : styles.chip, onClick: () => setFilterCat(c.id) }, c.label)))),
+            filteredProducts.length === 0 ? (React.createElement("div", { style: styles.emptyState },
+                React.createElement("p", { style: styles.emptyTitle }, "\u0E8D\u0EB1\u0E87\u0E9A\u0ECD\u0EC8\u0EA1\u0EB5\u0EAA\u0EB4\u0E99\u0E84\u0EC9\u0EB2"),
+                React.createElement("p", { style: styles.emptyBody }, "\u0EC0\u0E9E\u0EB5\u0EC8\u0EA1\u0EAA\u0EB4\u0E99\u0E84\u0EC9\u0EB2\u0E97\u0EB3\u0EAD\u0EB4\u0E94\u0E82\u0EAD\u0E87\u0EC0\u0E88\u0EBB\u0EC9\u0EB2 \u0EC0\u0E9E\u0EB7\u0EC8\u0EAD\u0EC0\u0EA5\u0EB5\u0EC8\u0EA1\u0E95\u0EB4\u0E94\u0E95\u0EB2\u0EA1\u0EAA\u0EB2\u0E87\u0EC0\u0E84\u0EB7\u0EC8\u0EAD\u0E87"))) : (React.createElement("div", { style: styles.list }, filteredProducts.map((p) => {
+                const c = catInfo(p.category);
+                const loss = p.price <= (p.cost || 0);
+                return (React.createElement("div", { key: p.id, style: styles.productRow, onClick: () => openEditForm(p) },
+                    React.createElement("div", { style: Object.assign(Object.assign({}, styles.catDot), { background: c.color }) }),
+                    React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+                        React.createElement("div", { style: styles.productName }, p.name),
+                        React.createElement("div", { style: styles.productMeta },
+                            "\u0E82\u0EB2\u0E8D ",
+                            fmt(p.price),
+                            " \u200B\u00B7 \u0E97\u0EB6\u0E99 ",
+                            fmt(p.cost || 0),
+                            " \u0E81\u0EB5\u0E9A / ",
+                            p.unit),
+                        p.lastRestocked && (React.createElement("div", { style: styles.dateMeta },
+                            "\u0E99\u0EB3\u0EC0\u0E82\u0EBB\u0EC9\u0EB2 ",
+                            shortDate(dateStr(p.lastRestocked))))),
+                    React.createElement("div", { style: { textAlign: "right" } },
+                        React.createElement("div", { style: Object.assign(Object.assign({}, styles.stockBadge), { background: p.stock <= 5 ? "#FCEBEB" : "#F1EFE8", color: p.stock <= 5 ? "#791F1F" : "#5F5E5A" }) },
+                            fmt(p.stock),
+                            " ",
+                            p.unit),
+                        loss ? (React.createElement("div", { style: styles.lossText },
+                            "\u0E82\u0EB2\u0E94\u0E97\u0EB6\u0E99 ",
+                            fmt((p.cost || 0) - p.price))) : (React.createElement("div", { style: styles.marginText },
+                            "+",
+                            fmt(p.price - (p.cost || 0)),
+                            " \u0E81\u0EB3\u0EC4\u0EA5")),
+                        React.createElement("div", { style: styles.quickAdjustRow, onClick: (e) => e.stopPropagation() },
+                            React.createElement("button", { style: styles.quickAdjustBtn, onClick: () => quickAdjustStock(p.id, -1), disabled: p.stock <= 0, "aria-label": "\u0EAB\u0EBC\u0EB8\u0E94\u0EAA\u0EB2\u0E87" }, "\u2212"),
+                            React.createElement("button", { style: styles.quickAdjustBtn, onClick: () => quickAdjustStock(p.id, 1), "aria-label": "\u0EC0\u0E9E\u0EB5\u0EC8\u0EA1\u0EAA\u0EB2\u0E87" }, "+")))));
+            }))),
+            React.createElement("button", { style: styles.fab, onClick: openNewForm, "aria-label": "\u0EC0\u0E9E\u0EB5\u0EC8\u0EA1\u0EAA\u0EB4\u0E99\u0E84\u0EC9\u0EB2" },
+                React.createElement("i", { className: "ti ti-plus", style: { fontSize: 22 }, "aria-hidden": "true" })))),
+        tab === "sell" && (React.createElement("div", null,
+            products.length === 0 ? (React.createElement("div", { style: styles.emptyState },
+                React.createElement("p", { style: styles.emptyTitle }, "\u0E8D\u0EB1\u0E87\u0E9A\u0ECD\u0EC8\u0EA1\u0EB5\u0EAA\u0EB4\u0E99\u0E84\u0EC9\u0EB2\u0EC3\u0EAB\u0EC9\u0E82\u0EB2\u0E8D"),
+                React.createElement("p", { style: styles.emptyBody }, "\u0EC4\u0E9B\u0E97\u0EB5\u0EC8\u0EC1\u0E97\u0EB1\u0E9A \"\u0EAA\u0EB4\u0E99\u0E84\u0EC9\u0EB2\" \u0EC0\u0E9E\u0EB7\u0EC8\u0EAD\u0EC0\u0E9E\u0EB5\u0EC8\u0EA1\u0EAA\u0EB4\u0E99\u0E84\u0EC9\u0EB2\u0E81\u0EC8\u0EAD\u0E99"))) : (React.createElement("div", { style: styles.list }, products.map((p) => {
+                const qty = saleCart[p.id] || 0;
+                const c = catInfo(p.category);
+                return (React.createElement("div", { key: p.id, style: styles.productRow },
+                    React.createElement("div", { style: Object.assign(Object.assign({}, styles.catDot), { background: c.color }) }),
+                    React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+                        React.createElement("div", { style: styles.productName }, p.name),
+                        React.createElement("div", { style: styles.productMeta },
+                            fmt(p.price),
+                            " \u0E81\u0EB5\u0E9A \u200B\u00B7 \u0EC0\u0EAB\u0EBC\u0EB7\u0EAD ",
+                            fmt(p.stock),
+                            " ",
+                            p.unit)),
+                    React.createElement("div", { style: styles.qtyControl },
+                        React.createElement("button", { style: styles.qtyBtn, onClick: () => adjustCart(p.id, -1, p.stock), disabled: qty === 0, "aria-label": "\u0EAB\u0EBC\u0EB8\u0E94\u0E88\u0EB3\u0E99\u0EA7\u0E99" },
+                            React.createElement("i", { className: "ti ti-minus", style: { fontSize: 14 }, "aria-hidden": "true" })),
+                        React.createElement("span", { style: styles.qtyValue }, qty),
+                        React.createElement("button", { style: styles.qtyBtn, onClick: () => adjustCart(p.id, 1, p.stock), disabled: qty >= p.stock, "aria-label": "\u0EC0\u0E9E\u0EB5\u0EC8\u0EA1\u0E88\u0EB3\u0E99\u0EA7\u0E99" },
+                            React.createElement("i", { className: "ti ti-plus", style: { fontSize: 14 }, "aria-hidden": "true" })))));
+            }))),
+            cartItems.length > 0 && (React.createElement("div", { style: styles.cartBar },
+                React.createElement("div", null,
+                    React.createElement("div", { style: styles.cartLabel },
+                        cartItems.length,
+                        " \u0EA5\u0EB2\u0E8D\u0E81\u0EB2\u0E99"),
+                    React.createElement("div", { style: styles.cartTotal },
+                        fmt(cartTotal),
+                        " \u0E81\u0EB5\u0E9A")),
+                React.createElement("button", { style: styles.completeBtn, onClick: completeSale }, "\u0E9A\u0EB1\u0E99\u0E97\u0EB6\u0E81\u0E81\u0EB2\u0E99\u0E82\u0EB2\u0E8D"))),
+            cartItems.length === 0 && lastCompletedSale && (React.createElement("div", { style: styles.receiptPrompt },
+                React.createElement("span", null,
+                    "\u0E9A\u0EB1\u0E99\u0E97\u0EB6\u0E81\u0EAA\u0EB3\u0EC0\u0EA5\u0EB1\u0E94! ",
+                    fmt(lastCompletedSale.total),
+                    " \u0E81\u0EB5\u0E9A"),
+                React.createElement("button", { style: styles.smallAddBtn, onClick: () => shareReceipt(lastCompletedSale) }, "\u0EC1\u0E9A\u0EC8\u0E87\u0E9B\u0EB1\u0E99\u0EC3\u0E9A\u0E9A\u0EB4\u0E99"))),
+            lastReceipt && (React.createElement("div", { style: styles.modalOverlay, onClick: () => setLastReceipt(null) },
+                React.createElement("div", { style: styles.modal, onClick: (e) => e.stopPropagation() },
+                    React.createElement("div", { style: styles.modalHeader },
+                        React.createElement("span", { style: styles.modalTitle }, "\u0EC3\u0E9A\u0E9A\u0EB4\u0E99"),
+                        React.createElement("button", { style: styles.closeBtn, onClick: () => setLastReceipt(null), "aria-label": "\u0E9B\u0EB4\u0E94" },
+                            React.createElement("i", { className: "ti ti-x", style: { fontSize: 18 }, "aria-hidden": "true" }))),
+                    React.createElement("textarea", { readOnly: true, style: Object.assign(Object.assign({}, styles.textarea), { minHeight: 140 }), value: lastReceipt, onFocus: (e) => e.target.select() }),
+                    React.createElement("p", { style: styles.hintText }, "\u0EC1\u0E95\u0EB0\u0EAB\u0EC9\u0EAD\u0E87\u0E82\u0ECD\u0EC9\u0E84\u0EA7\u0EB2\u0EA1\u0EC1\u0EA5\u0EC9\u0EA7\u0E81\u0ECA\u0EAD\u0E9A\u0EC4\u0E9B\u0EAA\u0EBB\u0EC8\u0E87\u0EC3\u0EAB\u0EC9\u0EA5\u0EB9\u0E81\u0E84\u0EC9\u0EB2\u0EC4\u0E94\u0EC9\u0EC0\u0EA5\u0EB5\u0E8D")))))),
+        tab === "report" && (React.createElement("div", null,
+            React.createElement("div", { style: styles.sectionLabel }, "\u0E81\u0EB3\u0EC4\u0EA5 7 \u0EA7\u0EB1\u0E99\u0EAB\u0EBC\u0EC9\u0EB2\u0EAA\u0EB8\u0E94"),
+            React.createElement("div", { style: styles.chartWrap }, chartData.map((d) => {
+                const h = Math.max(2, (Math.abs(d.profit) / maxChartVal) * 80);
+                return (React.createElement("div", { key: d.date, style: styles.chartCol },
+                    React.createElement("div", { style: styles.chartBarTrack },
+                        React.createElement("div", { style: Object.assign(Object.assign({}, styles.chartBar), { height: `${h}px`, background: d.profit < 0 ? "#E24B4A" : "#639922" }) })),
+                    React.createElement("div", { style: styles.chartLabel }, shortDate(d.date))));
+            })),
+            React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", margin: "20px 0 10px" } },
+                React.createElement("span", { style: styles.sectionLabel }, "\u0EA5\u0EB2\u0E8D\u0E87\u0EB2\u0E99\u0E9B\u0EB0\u0E88\u0EB3\u0EA7\u0EB1\u0E99"),
+                React.createElement("input", { type: "date", value: reportDate, max: todayStr(), onChange: (e) => setReportDate(e.target.value), style: styles.dateInput })),
+            React.createElement("div", { style: styles.summaryRow },
+                React.createElement("div", { style: styles.summaryCard },
+                    React.createElement("div", { style: styles.summaryLabel }, "\u0E8D\u0EAD\u0E94\u0E82\u0EB2\u0E8D"),
+                    React.createElement("div", { style: styles.summaryValue },
+                        fmt(reportRevenue),
+                        " \u0E81\u0EB5\u0E9A")),
+                React.createElement("div", { style: styles.summaryCard },
+                    React.createElement("div", { style: styles.summaryLabel }, "\u0E81\u0EB3\u0EC4\u0EA5"),
+                    React.createElement("div", { style: Object.assign(Object.assign({}, styles.summaryValue), { color: reportProfit < 0 ? "#A32D2D" : "#3B6D11" }) },
+                        fmt(reportProfit),
+                        " \u0E81\u0EB5\u0E9A"))),
+            reportSales.length === 0 ? (React.createElement("div", { style: styles.emptyState },
+                React.createElement("p", { style: styles.emptyTitle }, "\u0E9A\u0ECD\u0EC8\u0EA1\u0EB5\u0E81\u0EB2\u0E99\u0E82\u0EB2\u0E8D\u0EC3\u0E99\u0EA7\u0EB1\u0E99\u0E99\u0EB5\u0EC9"),
+                React.createElement("p", { style: styles.emptyBody }, "\u0EA5\u0EAD\u0E87\u0EC0\u0EA5\u0EB7\u0EAD\u0E81\u0EA7\u0EB1\u0E99\u0E97\u0EB5\u0EAD\u0EB7\u0EC8\u0E99 \u0EAB\u0EBC\u0EB7\u0EC4\u0E9B\u0E9A\u0EB1\u0E99\u0E97\u0EB6\u0E81\u0E81\u0EB2\u0E99\u0E82\u0EB2\u0E8D\u0EC3\u0EDD\u0EC8"))) : (React.createElement("div", { style: styles.list }, reportSales.map((s) => (React.createElement("div", { key: s.id, style: styles.saleRow },
+                React.createElement("div", { style: { display: "flex", justifyContent: "space-between", marginBottom: 4 } },
+                    React.createElement("span", { style: styles.saleTime }, new Date(s.time).toLocaleTimeString("lo-LA", { hour: "2-digit", minute: "2-digit" })),
+                    React.createElement("span", { style: styles.saleAmount },
+                        fmt(s.total),
+                        " \u0E81\u0EB5\u0E9A",
+                        React.createElement("span", { style: styles.saleProfit },
+                            " (\u0E81\u0EB3\u0EC4\u0EA5 ",
+                            fmt(s.profit || 0),
+                            ")"))),
+                React.createElement("div", { style: styles.saleItems }, s.items.map((it, i) => (React.createElement("span", { key: i },
+                    it.name,
+                    " x",
+                    fmt(it.qty),
+                    i < s.items.length - 1 ? ", " : ""))))))))),
+            React.createElement("div", { style: { marginTop: 24 } },
+                React.createElement("div", { style: styles.sectionLabel }, "\u0E84\u0EB3\u0EC1\u0E99\u0EB0\u0E99\u0EB3 \u0E9A\u0ECD\u0EC8\u0EC3\u0EAB\u0EC9\u0E82\u0EB2\u0E94\u0E97\u0EB6\u0E99"),
+                React.createElement("div", { style: styles.adviceCard },
+                    React.createElement("div", { style: styles.adviceRow },
+                        React.createElement("span", { style: styles.adviceLabel }, "\u0EA1\u0EB9\u0E99\u0E84\u0EC8\u0EB2\u0EAA\u0EB2\u0E87\u0E97\u0EB1\u0E87\u0EDD\u0EBB\u0E94 (\u0E95\u0EBB\u0EC9\u0E99\u0E97\u0EB6\u0E99)"),
+                        React.createElement("span", { style: styles.adviceValue },
+                            fmt(totalInvestment),
+                            " \u0E81\u0EB5\u0E9A")),
+                    React.createElement("div", { style: styles.adviceRow },
+                        React.createElement("span", { style: styles.adviceLabel }, "\u0E96\u0EC9\u0EB2\u0E82\u0EB2\u0E8D\u0EDD\u0EBB\u0E94\u0E88\u0EB0\u0EC4\u0E94\u0EC9\u0E81\u0EB3\u0EC4\u0EA5\u0E9B\u0EB0\u0EA1\u0EB2\u0E99"),
+                        React.createElement("span", { style: Object.assign(Object.assign({}, styles.adviceValue), { color: potentialProfit < 0 ? "#A32D2D" : "#3B6D11" }) },
+                            fmt(potentialProfit),
+                            " \u0E81\u0EB5\u0E9A"))),
+                lossProducts.length > 0 ? (React.createElement("div", { style: { marginTop: 10 } },
+                    React.createElement("div", { style: styles.warnBanner },
+                        "\u0EA1\u0EB5 ",
+                        lossProducts.length,
+                        " \u0EA5\u0EB2\u0E8D\u0E81\u0EB2\u0E99 \u0E82\u0EB2\u0E8D\u0EC3\u0E99\u0EA5\u0EB2\u0E84\u0EB2\u0E97\u0EB5\u0EC8\u0E95\u0ECD\u0EC8\u0EB2\u0E81\u0EA7\u0EC8\u0EB2 \u0EAB\u0EBC\u0EB7\u0EC0\u0E97\u0EBB\u0EC8\u0EB2\u0E81\u0EB1\u0E9A\u0E95\u0EBB\u0EC9\u0E99\u0E97\u0EB6\u0E99 \u200B\u2014 \u0E88\u0EB0\u0E82\u0EB2\u0E94\u0E97\u0EB6\u0E99\u0E96\u0EC9\u0EB2\u0E82\u0EB2\u0E8D\u0EC3\u0E99\u0EA5\u0EB2\u0E84\u0EB2\u0E99\u0EB5\u0EC9"),
+                    React.createElement("div", { style: styles.list }, lossProducts.map((p) => {
+                        const suggested = Math.ceil(((p.cost || 0) * 1.15) / 100) * 100;
+                        return (React.createElement("div", { key: p.id, style: styles.productRow, onClick: () => openEditForm(p) },
+                            React.createElement("div", { style: { flex: 1 } },
+                                React.createElement("div", { style: styles.productName }, p.name),
+                                React.createElement("div", { style: styles.lossText },
+                                    "\u0E82\u0EB2\u0E8D ",
+                                    fmt(p.price),
+                                    " \u200B\u00B7 \u0E97\u0EB6\u0E99 ",
+                                    fmt(p.cost || 0),
+                                    " \u0E81\u0EB5\u0E9A")),
+                            React.createElement("div", { style: styles.suggestBadge },
+                                "\u0E84\u0EA7\u0E99\u0E82\u0EB2\u0E8D \u2265 ",
+                                fmt(suggested))));
+                    })))) : (React.createElement("div", { style: styles.okBanner }, "\u0E97\u0EB8\u0E81\u0EAA\u0EB4\u0E99\u0E84\u0EC9\u0EB2\u0E95\u0EB1\u0EC9\u0E87\u0EA5\u0EB2\u0E84\u0EB2\u0E82\u0EB2\u0E8D\u0EAA\u0EB9\u0E87\u0E81\u0EA7\u0EC8\u0EB2\u0E95\u0EBB\u0EC9\u0E99\u0E97\u0EB6\u0E99\u0EC1\u0EA5\u0EC9\u0EA7 \u0E94\u0EB5\u0EAB\u0EBC\u0EB2\u0E8D"))))),
+        showForm && editing && (React.createElement("div", { style: styles.modalOverlay, onClick: () => { setShowForm(false); setEditing(null); } },
+            React.createElement("div", { style: styles.modal, onClick: (e) => e.stopPropagation() },
+                React.createElement("div", { style: styles.modalHeader },
+                    React.createElement("span", { style: styles.modalTitle }, editing.id ? "ແກ້ໄຂສິນຄ້າ" : "ເພີ່ມສິນຄ້າໃໝ່"),
+                    React.createElement("button", { style: styles.closeBtn, onClick: () => { setShowForm(false); setEditing(null); }, "aria-label": "\u0E9B\u0EB4\u0E94" },
+                        React.createElement("i", { className: "ti ti-x", style: { fontSize: 18 }, "aria-hidden": "true" }))),
+                React.createElement("form", { onSubmit: handleSaveProduct },
+                    React.createElement("label", { style: styles.formLabel }, "\u0EDD\u0EA7\u0E94\u0EDD\u0EB9\u0EC8"),
+                    React.createElement("select", { style: styles.input, value: editing.category, onChange: (e) => setEditing(Object.assign(Object.assign({}, editing), { category: e.target.value, name: "" })) }, CATEGORIES.map((c) => (React.createElement("option", { key: c.id, value: c.id }, c.label)))),
+                    React.createElement("label", { style: styles.formLabel }, "\u0E8A\u0EB7\u0EC8\u0EAA\u0EB4\u0E99\u0E84\u0EC9\u0EB2"),
+                    React.createElement("select", { style: styles.input, value: editing.name, onChange: (e) => setEditing(Object.assign(Object.assign({}, editing), { name: e.target.value })) },
+                        React.createElement("option", { value: "" }, "-- \u0EC0\u0EA5\u0EB7\u0EAD\u0E81\u0E8A\u0EB7\u0EC8\u0EAA\u0EB4\u0E99\u0E84\u0EC9\u0EB2 --"),
+                        [...(DEFAULT_NAMES[editing.category] || []), ...(customNames[editing.category] || [])].map((n) => (React.createElement("option", { key: n, value: n }, n)))),
+                    !addingName ? (React.createElement("button", { type: "button", style: styles.addNameBtn, onClick: () => setAddingName(true) }, "+ \u0EC0\u0E9E\u0EB5\u0EC8\u0EA1\u0E8A\u0EB7\u0EC8\u0EAA\u0EB4\u0E99\u0E84\u0EC9\u0EB2\u0EC3\u0EDD\u0EC8")) : (React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 6 } },
+                        React.createElement("input", { style: Object.assign(Object.assign({}, styles.input), { flex: 1 }), value: newNameInput, onChange: (e) => setNewNameInput(e.target.value), placeholder: "\u0E9E\u0EB4\u0EA1\u0E8A\u0EB7\u0EC8\u0EAA\u0EB4\u0E99\u0E84\u0EC9\u0EB2\u0EC3\u0EDD\u0EC8", autoFocus: true }),
+                        React.createElement("button", { type: "button", style: styles.smallAddBtn, onClick: handleAddCustomName }, "\u0EC0\u0E9E\u0EB5\u0EC8\u0EA1"))),
+                    React.createElement("div", { style: { display: "flex", gap: 12 } },
+                        React.createElement("div", { style: { flex: 1 } },
+                            React.createElement("label", { style: styles.formLabel }, "\u0E95\u0EBB\u0EC9\u0E99\u0E97\u0EB6\u0E99 (\u0E81\u0EB5\u0E9A)"),
+                            React.createElement("input", { style: styles.input, type: "number", inputMode: "decimal", value: editing.cost, onChange: (e) => setEditing(Object.assign(Object.assign({}, editing), { cost: e.target.value })), placeholder: "0" })),
+                        React.createElement("div", { style: { flex: 1 } },
+                            React.createElement("label", { style: styles.formLabel }, "\u0EA5\u0EB2\u0E84\u0EB2\u0E82\u0EB2\u0E8D (\u0E81\u0EB5\u0E9A)"),
+                            React.createElement("input", { style: styles.input, type: "number", inputMode: "decimal", value: editing.price, onChange: (e) => setEditing(Object.assign(Object.assign({}, editing), { price: e.target.value })), placeholder: "0" }))),
+                    React.createElement("label", { style: styles.formLabel }, "\u0EAB\u0EBB\u0EA7\u0EDC\u0EC8\u0EA7\u0E8D"),
+                    React.createElement("select", { style: styles.input, value: editing.unit, onChange: (e) => setEditing(Object.assign(Object.assign({}, editing), { unit: e.target.value })) }, UNITS.map((u) => (React.createElement("option", { key: u, value: u }, u)))),
+                    React.createElement("label", { style: styles.formLabel }, "\u0E88\u0EB3\u0E99\u0EA7\u0E99\u0EC3\u0E99\u0EAA\u0EB2\u0E87"),
+                    React.createElement("input", { style: styles.input, type: "number", inputMode: "decimal", value: editing.stock, onChange: (e) => setEditing(Object.assign(Object.assign({}, editing), { stock: e.target.value })), placeholder: "0" }),
+                    editing.id && (React.createElement("p", { style: styles.hintText }, "\u0E96\u0EC9\u0EB2\u0EC0\u0E9E\u0EB5\u0EC8\u0EA1\u0E88\u0EB3\u0E99\u0EA7\u0E99\u0EAB\u0EBC\u0EB2\u0E8D\u0E81\u0EA7\u0EC8\u0EB2\u0EC0\u0E81\u0EBB\u0EC8\u0EB2 \u0EA5\u0EB0\u0E9A\u0EBB\u0E9A\u0E88\u0EB0\u0E96\u0EB7\u0EA7\u0EC8\u0EB2\u0EC0\u0E9B\u0EB1\u0E99\u0E81\u0EB2\u0E99\u0E99\u0EB3\u0EC0\u0E82\u0EBB\u0EC9\u0EB2\u0EAA\u0EB2\u0E87\u0EC3\u0EDD\u0EC8 \u0EC1\u0EA5\u0EB0 \u0E9A\u0EB1\u0E99\u0E97\u0EB6\u0E81\u0EA7\u0EB1\u0E99\u0E97\u0EB5\u0EC3\u0EAB\u0EC9\u0EAD\u0EB1\u0E94\u0E95\u0EB0\u0EC2\u0E99\u0EA1\u0EB1\u0E94")),
+                    editing.dateAdded && (React.createElement("p", { style: styles.hintText },
+                        "\u0EC0\u0E9E\u0EB5\u0EC8\u0EA1\u0EAA\u0EB4\u0E99\u0E84\u0EC9\u0EB2\u0E99\u0EB5\u0EC9\u0EA7\u0EB1\u0E99\u0E97\u0EB5 ",
+                        shortDate(dateStr(editing.dateAdded)))),
+                    React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 20 } },
+                        editing.id && (React.createElement("button", { type: "button", style: styles.deleteBtn, onClick: () => confirmDelete(editing.id) }, "\u0EA5\u0EB6\u0E9A")),
+                        React.createElement("button", { type: "submit", style: styles.saveBtn }, editing.id ? "ບັນທຶກການແກ້ໄຂ" : "ເພີ່ມສິນຄ້າ")))))),
+        showBackup && (React.createElement("div", { style: styles.modalOverlay, onClick: () => { setShowBackup(false); setImportError(""); } },
+            React.createElement("div", { style: styles.modal, onClick: (e) => e.stopPropagation() },
+                React.createElement("div", { style: styles.modalHeader },
+                    React.createElement("span", { style: styles.modalTitle }, "\u0EAA\u0EB3\u0EAE\u0EAD\u0E87 / \u0E81\u0EB9\u0EC9\u0E84\u0EB7\u0E99\u0E82\u0ECD\u0EC9\u0EA1\u0EB9\u0E99"),
+                    React.createElement("button", { style: styles.closeBtn, onClick: () => { setShowBackup(false); setImportError(""); }, "aria-label": "\u0E9B\u0EB4\u0E94" },
+                        React.createElement("i", { className: "ti ti-x", style: { fontSize: 18 }, "aria-hidden": "true" }))),
+                React.createElement("div", { style: styles.sectionDivider }),
+                React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
+                    React.createElement("span", { style: styles.sectionLabel }, "\u0EA5\u0EB0\u0EAB\u0EB1\u0E94\u0E9B\u0EC9\u0EAD\u0E87\u0E81\u0EB1\u0E99\u0EC0\u0E9B\u0EB5\u0E94\u0EC1\u0EAD\u0EB1\u0E9A"),
+                    pin ? (React.createElement("button", { style: styles.deleteBtnSmall, onClick: handleRemovePin }, "\u0EC0\u0EAD\u0EBB\u0EB2\u0EA5\u0EB0\u0EAB\u0EB1\u0E94\u0EAD\u0EAD\u0E81")) : (React.createElement("button", { style: styles.smallAddBtn, onClick: () => setShowPinSetup(true) }, "\u0E95\u0EB1\u0EC9\u0E87\u0EA5\u0EB0\u0EAB\u0EB1\u0E94"))),
+                React.createElement("p", { style: styles.hintText }, "\u0EA5\u0EB0\u0EAB\u0EB1\u0E94\u0E99\u0EB5\u0EC9\u0E9E\u0EBD\u0E87\u0EC1\u0E95\u0EC8\u0E81\u0EB1\u0E99\u0E84\u0EBB\u0E99\u0EAD\u0EB7\u0EC8\u0E99\u0EC0\u0E9B\u0EB5\u0E94\u0EC1\u0EAD\u0EB1\u0E9A\u0EA2\u0EB9\u0EC8\u0EC3\u0E99\u0EC2\u0E97\u0EA5\u0EB0\u0EAA\u0EB1\u0E9A\u0EC0\u0E88\u0EBB\u0EC9\u0EB2 \u0E9A\u0ECD\u0EC8\u0EC1\u0EA1\u0EC8\u0E99\u0E81\u0EB2\u0E99\u0EC0\u0E82\u0EBB\u0EC9\u0EB2\u0EA5\u0EB0\u0EAB\u0EB1\u0E94\u0E82\u0ECD\u0EC9\u0EA1\u0EB9\u0E99 \u2014 \u0EA2\u0EC8\u0EB2\u0EC3\u0E8A\u0EC9\u0EAE\u0EC8\u0EA7\u0EA1\u0E81\u0EB1\u0E9A\u0E82\u0ECD\u0EC9\u0EA1\u0EB9\u0E99\u0EAA\u0EB3\u0E84\u0EB1\u0E99\u0EAD\u0EB7\u0EC8\u0E99"),
+                React.createElement("p", { style: styles.hintText }, "\u0E96\u0EC9\u0EB2\u0EC1\u0EAD\u0EB1\u0E9A\u0E9A\u0ECD\u0EC8\u0EAA\u0EB2\u0EA1\u0EB2\u0E94\u0E9A\u0EB1\u0E99\u0E97\u0EB6\u0E81\u0E82\u0ECD\u0EC9\u0EA1\u0EB9\u0E99\u0EAD\u0EB1\u0E94\u0E95\u0EB0\u0EC2\u0E99\u0EA1\u0EB1\u0E94\u0EC4\u0E94\u0EC9 \u0EC3\u0EAB\u0EC9\u0E81\u0ECA\u0EAD\u0E9A\u0E82\u0ECD\u0EC9\u0E84\u0EA7\u0EB2\u0EA1\u0E99\u0EB5\u0EC9\u0EC4\u0E9B\u0EC0\u0E81\u0EB1\u0E9A\u0EC4\u0EA7\u0EC9 (\u0EC0\u0E8A\u0EB1\u0EC8\u0E99 \u0EA7\u0EB2\u0E87\u0EC3\u0EAA\u0EC8 Notes \u0EAB\u0EBC\u0EB7\u0EAA\u0EBB\u0EC8\u0E87\u0EAB\u0EB2\u0E95\u0EBB\u0E99\u0EC0\u0EAD\u0E87\u0EC3\u0E99\u0EC1\u0E8A\u0EB1\u0E94) \u0EC1\u0EA5\u0EC9\u0EA7\u0E99\u0EB3\u0EA1\u0EB2\u0EA7\u0EB2\u0E87\u0E84\u0EB7\u0E99\u0EA2\u0EB9\u0EC8\u0E99\u0EB5\u0EC9\u0EC3\u0E99\u0E84\u0EB1\u0EC9\u0E87\u0EDC\u0EC9\u0EB2"),
+                React.createElement("label", { style: styles.formLabel }, "\u0E82\u0ECD\u0EC9\u0EA1\u0EB9\u0E99\u0E9B\u0EB1\u0E94\u0E88\u0EB8\u0E9A\u0EB1\u0E99 (\u0EAA\u0EB3\u0EA5\u0EB1\u0E9A\u0E81\u0ECA\u0EAD\u0E9A\u0EC4\u0E9B\u0EC0\u0E81\u0EB1\u0E9A\u0EC4\u0EA7\u0EC9)"),
+                React.createElement("textarea", { readOnly: true, style: styles.textarea, value: JSON.stringify({ products, sales }), onFocus: (e) => e.target.select() }),
+                React.createElement("label", { style: styles.formLabel }, "\u0EA7\u0EB2\u0E87\u0E82\u0ECD\u0EC9\u0EA1\u0EB9\u0E99\u0EC0\u0E81\u0EBB\u0EC8\u0EB2\u0E97\u0EB5\u0EC8\u0E99\u0EB5\u0EC9 \u0EC0\u0E9E\u0EB7\u0EC8\u0EAD\u0E81\u0EB9\u0EC9\u0E84\u0EB7\u0E99"),
+                React.createElement("textarea", { style: styles.textarea, value: importText, onChange: (e) => { setImportText(e.target.value); setImportError(""); }, placeholder: "\u0EA7\u0EB2\u0E87\u0E82\u0ECD\u0EC9\u0E84\u0EA7\u0EB2\u0EA1\u0E97\u0EB5\u0EC8\u0EC0\u0E84\u0EB5\u0E8D\u0E81\u0ECA\u0EAD\u0E9A\u0EC4\u0EA7\u0EC9\u0EA2\u0EB9\u0EC8\u0E99\u0EB5\u0EC9" }),
+                importError && React.createElement("p", { style: { color: "#A32D2D", fontSize: 12, marginTop: 4 } }, importError),
+                React.createElement("button", { style: Object.assign(Object.assign({}, styles.saveBtn), { width: "100%", marginTop: 12 }), onClick: handleImport, disabled: !importText.trim() }, "\u0E99\u0EB3\u0EC0\u0E82\u0EBB\u0EC9\u0EB2\u0E82\u0ECD\u0EC9\u0EA1\u0EB9\u0E99\u0E99\u0EB5\u0EC9")))),
+        showPinSetup && (React.createElement("div", { style: styles.modalOverlay, onClick: () => { setShowPinSetup(false); setNewPinInput(""); setPinError(""); } },
+            React.createElement("div", { style: styles.modal, onClick: (e) => e.stopPropagation() },
+                React.createElement("div", { style: styles.modalHeader },
+                    React.createElement("span", { style: styles.modalTitle }, "\u0E95\u0EB1\u0EC9\u0E87\u0EA5\u0EB0\u0EAB\u0EB1\u0E94\u0E9B\u0EC9\u0EAD\u0E87\u0E81\u0EB1\u0E99"),
+                    React.createElement("button", { style: styles.closeBtn, onClick: () => { setShowPinSetup(false); setNewPinInput(""); setPinError(""); }, "aria-label": "\u0E9B\u0EB4\u0E94" },
+                        React.createElement("i", { className: "ti ti-x", style: { fontSize: 18 }, "aria-hidden": "true" }))),
+                React.createElement("label", { style: styles.formLabel }, "\u0E95\u0EB1\u0EC9\u0E87\u0EA5\u0EB0\u0EAB\u0EB1\u0E94 (\u0EA2\u0EC8\u0EB2\u0E87\u0EDC\u0EC9\u0EAD\u0E8D 4 \u0EC2\u0E95\u0EC0\u0EA5\u0E81)"),
+                React.createElement("input", { style: styles.input, type: "password", inputMode: "numeric", value: newPinInput, onChange: (e) => setNewPinInput(e.target.value), placeholder: "****", autoFocus: true }),
+                pinError && React.createElement("p", { style: { color: "#A32D2D", fontSize: 12, marginTop: 4 } }, pinError),
+                React.createElement("button", { style: Object.assign(Object.assign({}, styles.saveBtn), { width: "100%", marginTop: 16 }), onClick: handleSetPin }, "\u0E9A\u0EB1\u0E99\u0E97\u0EB6\u0E81\u0EA5\u0EB0\u0EAB\u0EB1\u0E94")))),
+        confirmDeleteId && (React.createElement("div", { style: styles.modalOverlay, onClick: () => setConfirmDeleteId(null) },
+            React.createElement("div", { style: styles.modal, onClick: (e) => e.stopPropagation() },
+                React.createElement("div", { style: styles.modalHeader },
+                    React.createElement("span", { style: styles.modalTitle }, "\u0EA2\u0EB7\u0E99\u0EA2\u0EB1\u0E99\u0E81\u0EB2\u0E99\u0EA5\u0EB6\u0E9A")),
+                React.createElement("p", { style: styles.hintText }, "\u0EA5\u0EB6\u0E9A\u0EAA\u0EB4\u0E99\u0E84\u0EC9\u0EB2\u0E99\u0EB5\u0EC9\u0EAD\u0EAD\u0E81\u0E96\u0EB2\u0EA7\u0EAD\u0E99 \u0E9A\u0ECD\u0EC8\u0EAA\u0EB2\u0EA1\u0EB2\u0E94\u0E81\u0EB9\u0EC9\u0E84\u0EB7\u0E99\u0EC4\u0E94\u0EC9 \u0E95\u0EC9\u0EAD\u0E87\u0E81\u0EB2\u0E99\u0EA5\u0EB6\u0E9A\u0EC1\u0E97\u0EC9\u0E9A\u0ECD?"),
+                React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 16 } },
+                    React.createElement("button", { style: Object.assign(Object.assign({}, styles.chip), { flex: 1 }), onClick: () => setConfirmDeleteId(null) }, "\u0E8D\u0EBB\u0E81\u0EC0\u0EA5\u0EB5\u0E81"),
+                    React.createElement("button", { style: Object.assign(Object.assign({}, styles.deleteBtn), { flex: 1 }), onClick: () => {
+                            handleDeleteProduct(confirmDeleteId);
+                            setConfirmDeleteId(null);
+                        } }, "\u0EA5\u0EB6\u0E9A\u0EC0\u0EA5\u0EB5\u0E8D")))))));
+}
+const styles = {
+    app: {
+        fontFamily: "'Noto Sans Lao', 'Noto Sans', sans-serif",
+        maxWidth: 480,
+        margin: "0 auto",
+        padding: "16px",
+        color: "#2C2C2A",
+        position: "relative",
+        minHeight: 400,
+    },
+    loadingWrap: { padding: 40, textAlign: "center" },
+    lockScreen: {
+        minHeight: "80vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontFamily: "'Noto Sans Lao', 'Noto Sans', sans-serif",
+    },
+    lockBox: { width: "100%", maxWidth: 280, textAlign: "center", padding: 20 },
+    lockTitle: { fontSize: 15, color: "#2C2C2A", margin: "10px 0 16px" },
+    header: { marginBottom: 16, display: "flex", alignItems: "flex-start", justifyContent: "space-between" },
+    headerTitle: { fontSize: 22, fontWeight: 500 },
+    headerSub: { fontSize: 14, color: "#5F5E5A", marginTop: 2 },
+    backupBtn: {
+        width: 36,
+        height: 36,
+        borderRadius: "50%",
+        border: "1px solid #D3D1C7",
+        background: "#fff",
+        color: "#5F5E5A",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        cursor: "pointer",
+        flexShrink: 0,
+    },
+    textarea: {
+        width: "100%",
+        boxSizing: "border-box",
+        minHeight: 70,
+        padding: "10px 12px",
+        border: "1px solid #D3D1C7",
+        borderRadius: 8,
+        fontSize: 12,
+        fontFamily: "monospace",
+        resize: "vertical",
+    },
+    summaryRow: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 },
+    summaryCard: { background: "#F1EFE8", borderRadius: 10, padding: "12px 14px" },
+    summaryLabel: { fontSize: 12, color: "#5F5E5A", marginBottom: 4 },
+    summaryValue: { fontSize: 18, fontWeight: 500 },
+    toast: {
+        position: "fixed",
+        bottom: 20,
+        left: "50%",
+        transform: "translateX(-50%)",
+        background: "#2C2C2A",
+        color: "#fff",
+        padding: "10px 18px",
+        borderRadius: 20,
+        fontSize: 14,
+        zIndex: 50,
+    },
+    tabs: { display: "flex", gap: 6, marginBottom: 16, borderBottom: "1px solid #D3D1C7" },
+    tab: {
+        flex: 1,
+        background: "none",
+        border: "none",
+        padding: "10px 4px",
+        fontSize: 14,
+        color: "#5F5E5A",
+        cursor: "pointer",
+        borderBottom: "2px solid transparent",
+    },
+    tabActive: {
+        flex: 1,
+        background: "none",
+        border: "none",
+        padding: "10px 4px",
+        fontSize: 14,
+        fontWeight: 500,
+        color: "#3B6D11",
+        cursor: "pointer",
+        borderBottom: "2px solid #3B6D11",
+    },
+    filterRow: { display: "flex", gap: 8, overflowX: "auto", paddingBottom: 8, marginBottom: 8 },
+    chip: {
+        whiteSpace: "nowrap",
+        padding: "6px 14px",
+        borderRadius: 16,
+        border: "1px solid #D3D1C7",
+        background: "#fff",
+        fontSize: 13,
+        color: "#5F5E5A",
+        cursor: "pointer",
+    },
+    chipActive: {
+        whiteSpace: "nowrap",
+        padding: "6px 14px",
+        borderRadius: 16,
+        border: "1px solid #2C2C2A",
+        background: "#2C2C2A",
+        fontSize: 13,
+        color: "#fff",
+        cursor: "pointer",
+    },
+    list: { display: "flex", flexDirection: "column", gap: 8 },
+    productRow: {
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        background: "#fff",
+        border: "1px solid #E5E3DB",
+        borderRadius: 10,
+        padding: "10px 12px",
+        cursor: "pointer",
+    },
+    catDot: { width: 8, height: 8, borderRadius: "50%", flexShrink: 0 },
+    productName: { fontSize: 15, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+    productMeta: { fontSize: 12, color: "#5F5E5A", marginTop: 2 },
+    dateMeta: { fontSize: 11, color: "#888780", marginTop: 2 },
+    stockBadge: { fontSize: 12, padding: "3px 8px", borderRadius: 10, whiteSpace: "nowrap" },
+    stockBadge2: { fontSize: 12, padding: "3px 8px", borderRadius: 10, background: "#FCEBEB", color: "#791F1F", whiteSpace: "nowrap" },
+    marginText: { fontSize: 11, color: "#3B6D11", marginTop: 3 },
+    lossText: { fontSize: 11, color: "#A32D2D", marginTop: 3 },
+    saleProfit: { fontSize: 11, color: "#5F5E5A", fontWeight: 400 },
+    suggestBadge: { fontSize: 11, color: "#854F0B", background: "#FAEEDA", padding: "3px 8px", borderRadius: 10, whiteSpace: "nowrap" },
+    quickAdjustRow: { display: "flex", gap: 4, marginTop: 4, justifyContent: "flex-end" },
+    quickAdjustBtn: {
+        width: 22,
+        height: 22,
+        borderRadius: 6,
+        border: "1px solid #D3D1C7",
+        background: "#fff",
+        color: "#5F5E5A",
+        fontSize: 14,
+        lineHeight: 1,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        cursor: "pointer",
+        padding: 0,
+    },
+    sectionDivider: { height: 1, background: "#E5E3DB", margin: "16px 0 12px" },
+    deleteBtnSmall: {
+        background: "#FCEBEB",
+        color: "#791F1F",
+        border: "none",
+        borderRadius: 8,
+        padding: "6px 12px",
+        fontSize: 13,
+        cursor: "pointer",
+    },
+    emptyState: { textAlign: "center", padding: "40px 20px", color: "#5F5E5A" },
+    emptyTitle: { fontSize: 15, fontWeight: 500, marginBottom: 4, color: "#2C2C2A" },
+    emptyBody: { fontSize: 13 },
+    fab: {
+        position: "fixed",
+        bottom: 24,
+        right: "max(24px, calc(50% - 216px))",
+        width: 52,
+        height: 52,
+        borderRadius: "50%",
+        background: "#3B6D11",
+        color: "#fff",
+        border: "none",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        cursor: "pointer",
+        zIndex: 40,
+    },
+    qtyControl: { display: "flex", alignItems: "center", gap: 8 },
+    qtyBtn: {
+        width: 28,
+        height: 28,
+        borderRadius: "50%",
+        border: "1px solid #D3D1C7",
+        background: "#fff",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        cursor: "pointer",
+    },
+    qtyValue: { minWidth: 20, textAlign: "center", fontSize: 14, fontWeight: 500 },
+    cartBar: {
+        position: "sticky",
+        bottom: 12,
+        marginTop: 16,
+        background: "#2C2C2A",
+        color: "#fff",
+        borderRadius: 12,
+        padding: "12px 16px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+    },
+    cartLabel: { fontSize: 12, opacity: 0.8 },
+    cartTotal: { fontSize: 18, fontWeight: 500 },
+    receiptPrompt: {
+        marginTop: 16,
+        background: "#EAF3DE",
+        borderRadius: 10,
+        padding: "10px 14px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        fontSize: 13,
+        color: "#3B6D11",
+    },
+    completeBtn: {
+        background: "#fff",
+        color: "#2C2C2A",
+        border: "none",
+        borderRadius: 8,
+        padding: "10px 16px",
+        fontSize: 14,
+        fontWeight: 500,
+        cursor: "pointer",
+    },
+    sectionLabel: { fontSize: 14, fontWeight: 500, marginBottom: 10 },
+    saleRow: { background: "#fff", border: "1px solid #E5E3DB", borderRadius: 10, padding: "10px 12px" },
+    saleTime: { fontSize: 12, color: "#5F5E5A" },
+    saleAmount: { fontSize: 14, fontWeight: 500 },
+    saleItems: { fontSize: 12, color: "#5F5E5A" },
+    dateInput: {
+        padding: "6px 10px",
+        border: "1px solid #D3D1C7",
+        borderRadius: 8,
+        fontSize: 13,
+        fontFamily: "inherit",
+    },
+    chartWrap: {
+        display: "flex",
+        alignItems: "flex-end",
+        gap: 6,
+        height: 110,
+        background: "#F1EFE8",
+        borderRadius: 10,
+        padding: "10px 8px 6px",
+    },
+    chartCol: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 },
+    chartBarTrack: { height: 80, display: "flex", alignItems: "flex-end" },
+    chartBar: { width: "60%", minWidth: 6, borderRadius: "3px 3px 0 0", margin: "0 auto" },
+    chartLabel: { fontSize: 10, color: "#5F5E5A" },
+    adviceCard: { background: "#F1EFE8", borderRadius: 10, padding: "12px 14px" },
+    adviceRow: { display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: 13 },
+    adviceLabel: { color: "#5F5E5A" },
+    adviceValue: { fontWeight: 500 },
+    warnBanner: {
+        background: "#FCEBEB",
+        color: "#791F1F",
+        borderRadius: 10,
+        padding: "10px 12px",
+        fontSize: 13,
+        marginBottom: 8,
+    },
+    okBanner: {
+        background: "#EAF3DE",
+        color: "#3B6D11",
+        borderRadius: 10,
+        padding: "10px 12px",
+        fontSize: 13,
+        marginTop: 8,
+    },
+    modalOverlay: {
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.4)",
+        display: "flex",
+        alignItems: "flex-end",
+        justifyContent: "center",
+        zIndex: 100,
+    },
+    modal: {
+        background: "#fff",
+        borderRadius: "16px 16px 0 0",
+        padding: "20px",
+        width: "100%",
+        maxWidth: 480,
+        maxHeight: "85vh",
+        overflowY: "auto",
+    },
+    modalHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 },
+    modalTitle: { fontSize: 17, fontWeight: 500 },
+    closeBtn: { background: "none", border: "none", cursor: "pointer", color: "#5F5E5A" },
+    formLabel: { fontSize: 13, color: "#5F5E5A", display: "block", marginTop: 12, marginBottom: 4 },
+    hintText: { fontSize: 11, color: "#888780", marginTop: 8 },
+    addNameBtn: {
+        marginTop: 6,
+        background: "none",
+        border: "1px dashed #D3D1C7",
+        borderRadius: 8,
+        padding: "8px 12px",
+        fontSize: 13,
+        color: "#3B6D11",
+        cursor: "pointer",
+        width: "100%",
+    },
+    smallAddBtn: {
+        background: "#3B6D11",
+        color: "#fff",
+        border: "none",
+        borderRadius: 8,
+        padding: "0 16px",
+        fontSize: 14,
+        fontWeight: 500,
+        cursor: "pointer",
+    },
+    input: {
+        width: "100%",
+        boxSizing: "border-box",
+        padding: "10px 12px",
+        border: "1px solid #D3D1C7",
+        borderRadius: 8,
+        fontSize: 15,
+        fontFamily: "inherit",
+    },
+    saveBtn: {
+        flex: 1,
+        background: "#3B6D11",
+        color: "#fff",
+        border: "none",
+        borderRadius: 8,
+        padding: "12px",
+        fontSize: 15,
+        fontWeight: 500,
+        cursor: "pointer",
+    },
+    deleteBtn: {
+        background: "#FCEBEB",
+        color: "#791F1F",
+        border: "none",
+        borderRadius: 8,
+        padding: "12px 16px",
+        fontSize: 15,
+        fontWeight: 500,
+        cursor: "pointer",
+    },
+};
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(React.createElement(ShopApp));
+</script>
+</body>
+</html>
